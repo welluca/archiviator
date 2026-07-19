@@ -30,12 +30,12 @@ def _get_attachment(db: Session, attachment_id: int) -> Attachment:
     return attachment
 
 
-def create_attachment(
-    db: Session, entity_id: int, data: bytes, title: str | None = None
-) -> Attachment:
-    """Infer type from content, run the media pipeline, insert a row (allowed on
-    every entity kind). MAX_UPLOAD is read at call time so tests can patch it."""
-    _get_entity(db, entity_id)
+def process_upload(db: Session, data: bytes, title: str | None = None) -> Attachment:
+    """Infer type from content, run the media pipeline (413/415 happen HERE,
+    before any row exists) and build an Attachment row that is NOT yet added to
+    the session — entity_id unset, caller wires it and commits (intake capture
+    reuses this inside its single transaction). MAX_UPLOAD is read at call time
+    so tests can patch it."""
     if len(data) > media.MAX_UPLOAD:
         raise media.FileTooLargeError(
             f"Upload exceeds the {media.MAX_UPLOAD // (1024 * 1024)} MB limit"
@@ -46,7 +46,6 @@ def create_attachment(
     if PDF_MAGIC in data[:1024]:
         processed = media.process_document(data)
         attachment = Attachment(
-            entity_id=entity_id,
             type="document",
             title=title,
             file_path=processed.file_path,
@@ -57,7 +56,6 @@ def create_attachment(
     else:
         photo = media.process_photo(data)  # raises UnsupportedMediaError -> 415
         attachment = Attachment(
-            entity_id=entity_id,
             type="photo",
             title=title,
             file_path=photo.file_path,
@@ -83,7 +81,16 @@ def create_attachment(
         attachment.height = existing.height
         if attachment.type == "photo":
             media.ensure_derivatives(attachment.content_hash)
+    return attachment
 
+
+def create_attachment(
+    db: Session, entity_id: int, data: bytes, title: str | None = None
+) -> Attachment:
+    """Pipeline + insert a row (allowed on every entity kind)."""
+    _get_entity(db, entity_id)
+    attachment = process_upload(db, data, title=title)
+    attachment.entity_id = entity_id
     db.add(attachment)
     db.commit()
     return attachment

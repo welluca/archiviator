@@ -98,6 +98,11 @@ export function EntityRow({ entity, onOpen, actions, showBreadcrumb = false }: E
               {entity.subtype}
             </span>
           )}
+          {entity.draft && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-900/40 border border-violet-700/40 text-violet-400 shrink-0">
+              draft
+            </span>
+          )}
           {tags.slice(0, 2).map((t) => (
             <TagChip key={t.id} tag={t} />
           ))}

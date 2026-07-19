@@ -6,7 +6,9 @@ import {
   AlertTriangle,
   Banknote,
   Box,
+  Camera,
   CheckCircle2,
+  ChevronRight,
   Clock,
   Loader2,
   Package,
@@ -112,6 +114,23 @@ export default function DashboardPage() {
     <div className="max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold text-white mb-1">Archiviator</h1>
       <p className="text-gray-500 text-sm mb-5">Self-hosted home catalog</p>
+
+      {/* M7: quick capture */}
+      <Link
+        to="/intake"
+        className="group flex items-center gap-4 bg-gradient-to-r from-blue-600/20 to-space-900 border border-blue-500/40 hover:border-blue-400/70 rounded-xl p-4 mb-5 transition-colors"
+      >
+        <span className="w-12 h-12 rounded-full bg-blue-600 group-hover:bg-blue-500 flex items-center justify-center transition-colors shrink-0">
+          <Camera className="w-6 h-6 text-white" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-white font-semibold text-sm">Quick capture</span>
+          <span className="block text-xs text-gray-400 mt-0.5">
+            Point, shoot, done — drafts pile up in the Inbox for triage later.
+          </span>
+        </span>
+        <ChevronRight className="w-5 h-5 text-gray-500 group-hover:text-white transition-colors shrink-0" />
+      </Link>
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">

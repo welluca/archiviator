@@ -11,7 +11,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel, field_validator
 
-from app.dependencies import DbSession, get_current_user
+from app.dependencies import DbSession, get_capture_actor, get_current_user
 from app.models.attachment import Attachment
 from app.models.entity import Entity
 from app.routers.entities import EntityOut, _single_out
@@ -19,6 +19,10 @@ from app.services import attachments as svc
 from app.services import media, tree
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
+# The upload endpoint ALSO accepts capture-scope device tokens (M7 phone
+# capture adds photos to existing entities); every other attachment endpoint
+# stays JWT-only on the router above.
+capture_router = APIRouter(dependencies=[Depends(get_capture_actor)])
 
 
 class AttachmentOut(BaseModel):
@@ -97,7 +101,7 @@ def _cover_id(db, entity_id: int) -> int | None:
     return entity.cover_attachment_id if entity else None
 
 
-@router.post(
+@capture_router.post(
     "/entities/{entity_id}/attachments",
     response_model=AttachmentOut,
     status_code=status.HTTP_201_CREATED,

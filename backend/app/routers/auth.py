@@ -1,16 +1,19 @@
-"""Auth router: login, refresh (rotating, 90-day sliding expiry), logout, me."""
+"""Auth router: login, refresh (rotating, 90-day sliding expiry), logout, me,
+and device tokens (M7): capture-scope bearers for phone clients, JWT-only CRUD."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from app.config import get_settings
 from app.dependencies import CurrentUser, DbSession
 from app.models.auth import RefreshToken, User
+from app.services import device_tokens as device_tokens_svc
+from app.services.tree import NotFoundError
 from app.utils.dt import utcnow
 from app.utils.security import (
     create_access_token,
@@ -109,3 +112,73 @@ async def logout(request: RefreshRequest, db: DbSession):
 @router.get("/me", response_model=MeResponse)
 async def me(current_user: CurrentUser):
     return MeResponse(id=current_user.id, username=current_user.username)
+
+
+# --- device tokens (M7) -------------------------------------------------------
+
+
+class DeviceTokenCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=255)
+    # null/omitted = non-expiring (a kitchen iPad outlives any sane TTL).
+    expires_days: int | None = Field(default=None, ge=1, le=3650)
+
+    @field_validator("label")
+    @classmethod
+    def _non_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("label must not be blank")
+        return v
+
+
+class DeviceTokenCreated(BaseModel):
+    id: int
+    label: str
+    token: str  # plaintext, shown exactly ONCE
+
+
+class DeviceTokenOut(BaseModel):
+    id: int
+    label: str
+    # Nullable: migration 0006 added the column nullable (SQLite ADD COLUMN
+    # forbids non-constant defaults) — mirror that instead of lying to clients.
+    created_at: datetime | None
+    last_used_at: datetime | None
+    revoked_at: datetime | None
+
+
+@router.post(
+    "/device-tokens", response_model=DeviceTokenCreated, status_code=status.HTTP_201_CREATED
+)
+async def create_device_token(
+    payload: DeviceTokenCreate, current_user: CurrentUser, db: DbSession
+):
+    """Mint a capture-scope device token. The plaintext appears only in THIS
+    response — the listing never returns it (sha256 stored)."""
+    token, plaintext = device_tokens_svc.create_token(
+        db, current_user.id, payload.label, expires_days=payload.expires_days
+    )
+    return DeviceTokenCreated(id=token.id, label=token.label, token=plaintext)
+
+
+@router.get("/device-tokens", response_model=list[DeviceTokenOut])
+async def list_device_tokens(current_user: CurrentUser, db: DbSession):
+    return [
+        DeviceTokenOut(
+            id=t.id,
+            label=t.label,
+            created_at=t.created_at,
+            last_used_at=t.last_used_at,
+            revoked_at=t.revoked_at,
+        )
+        for t in device_tokens_svc.list_tokens(db, current_user.id)
+    ]
+
+
+@router.post("/device-tokens/{token_id}/revoke", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_device_token(token_id: int, current_user: CurrentUser, db: DbSession):
+    try:
+        device_tokens_svc.revoke_token(db, current_user.id, token_id)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

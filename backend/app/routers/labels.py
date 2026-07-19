@@ -11,20 +11,24 @@ entity AU trigger (AFTER UPDATE OF ... asset_tag) keeps search in sync.
 
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.config import get_settings
-from app.dependencies import DbSession, get_current_user
+from app.dependencies import Actor, DbSession, get_capture_actor, get_current_user
 from app.models.labels import LabelTemplate
-from app.routers.entities import EntityOut, _single_out
+from app.routers.entities import EntityOut, _single_out, _thumb_map
 from app.services import labels as svc
 from app.services import tree
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
+# /labels/resolve also serves the phone capture flow (QR scan -> where am I),
+# so it accepts capture-scope device tokens (M7); everything else stays
+# JWT-only on the router above.
+capture_router = APIRouter(dependencies=[Depends(get_capture_actor)])
 
 Kind = Literal["space", "furniture", "container", "item"]
 
@@ -221,14 +225,33 @@ async def list_templates(db: DbSession):
 # --- resolve / claim / void ---------------------------------------------------
 
 
-@router.get("/labels/resolve/{tag}")
-async def resolve_tag(tag: str, db: DbSession):
+def _slim_entity(db, entity) -> dict:
+    """The device-token view of a resolved entity: enough for 'where am I /
+    what is this' on a phone, nothing more. A leaked capture token must never
+    read purchase prices, serials or notes — those stay JWT-only (EntityOut)."""
+    thumb_path = _thumb_map(db, [entity]).get(entity.cover_attachment_id)
+    return {
+        "id": entity.id,
+        "name": entity.name,
+        "kind": entity.kind,
+        "breadcrumb": entity.breadcrumb,
+        "asset_tag": entity.asset_tag,
+        "thumb_url": f"/media/{thumb_path}" if thumb_path else None,
+    }
+
+
+@capture_router.get("/labels/resolve/{tag}")
+async def resolve_tag(
+    tag: str, db: DbSession, actor: Annotated[Actor, Depends(get_capture_actor)]
+):
     """{"status":"entity","entity":EntityOut} | {"status":"unclaimed","label":{...}}.
-    Exact union shape (no null side-keys), hence no single response_model."""
+    Exact union shape (no null side-keys), hence no single response_model.
+    Device-token callers get a slimmed entity instead of the full EntityOut."""
     with domain_errors():
         kind, obj = svc.resolve(db, tag)
     if kind == "entity":
-        return {"status": "entity", "entity": _single_out(db, obj)}
+        entity = _slim_entity(db, obj) if actor.via_device_token else _single_out(db, obj)
+        return {"status": "entity", "entity": entity}
     return {"status": "unclaimed", "label": {"asset_tag": obj.asset_tag, "batch_id": obj.batch_id}}
 
 

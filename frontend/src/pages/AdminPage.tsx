@@ -5,6 +5,7 @@ import {
   FileDown,
   Shapes,
   Shield,
+  Smartphone,
   Tags,
   Wrench,
 } from 'lucide-react';
@@ -13,12 +14,20 @@ import TagsTab from '../components/admin/TagsTab';
 import ImportExportTab from '../components/admin/ImportExportTab';
 import BackupsTab from '../components/admin/BackupsTab';
 import MaintenanceTab from '../components/admin/MaintenanceTab';
+import DeviceTokensTab from '../components/admin/DeviceTokensTab';
 
-type TabId = 'categories' | 'tags' | 'import-export' | 'backups' | 'maintenance';
+type TabId =
+  | 'categories'
+  | 'tags'
+  | 'device-tokens'
+  | 'import-export'
+  | 'backups'
+  | 'maintenance';
 
 const TABS: { id: TabId; label: string; icon: LucideIcon }[] = [
   { id: 'categories', label: 'Categories & Fields', icon: Shapes },
   { id: 'tags', label: 'Tags', icon: Tags },
+  { id: 'device-tokens', label: 'Device tokens', icon: Smartphone },
   { id: 'import-export', label: 'Import / Export', icon: FileDown },
   { id: 'backups', label: 'Backups', icon: DatabaseBackup },
   { id: 'maintenance', label: 'Maintenance', icon: Wrench },
@@ -56,6 +65,7 @@ export default function AdminPage() {
         <div className="min-w-0">
           {tab === 'categories' && <CategoriesFieldsTab />}
           {tab === 'tags' && <TagsTab />}
+          {tab === 'device-tokens' && <DeviceTokensTab />}
           {tab === 'import-export' && <ImportExportTab />}
           {tab === 'backups' && <BackupsTab />}
           {tab === 'maintenance' && <MaintenanceTab />}

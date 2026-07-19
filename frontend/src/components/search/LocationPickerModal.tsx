@@ -11,6 +11,11 @@ interface LocationPickerModalProps {
   selectedId: number | null;
   onPick: (id: number | null) => void;
   onClose: () => void;
+  /** Text overrides so other flows (intake triage) can reuse the picker. */
+  title?: string;
+  hint?: string;
+  /** Label of the null option (default 'Anywhere'). */
+  nullLabel?: string;
 }
 
 /** Tree picker for the search 'inside' filter — same pattern as MoveEntityModal,
@@ -22,6 +27,9 @@ export function LocationPickerModal({
   selectedId,
   onPick,
   onClose,
+  title = 'Search inside…',
+  hint = 'Limit results to a space, furniture or container — everything inside it is included.',
+  nullLabel = 'Anywhere',
 }: LocationPickerModalProps) {
   if (!open) return null;
 
@@ -57,11 +65,8 @@ export function LocationPickerModal({
   };
 
   return (
-    <Modal open={open} title="Search inside…" onClose={onClose} maxWidth="max-w-lg">
-      <p className="text-xs text-gray-500 mb-3">
-        Limit results to a space, furniture or container — everything inside it is
-        included.
-      </p>
+    <Modal open={open} title={title} onClose={onClose} maxWidth="max-w-lg">
+      <p className="text-xs text-gray-500 mb-3">{hint}</p>
 
       <div className="border border-space-700 rounded-lg bg-space-950 max-h-72 overflow-y-auto p-1.5">
         <button
@@ -74,7 +79,7 @@ export function LocationPickerModal({
           }`}
         >
           <Globe className="w-4 h-4 text-gray-500 shrink-0" />
-          <span>Anywhere</span>
+          <span>{nullLabel}</span>
         </button>
         {roots.map(renderNode)}
       </div>

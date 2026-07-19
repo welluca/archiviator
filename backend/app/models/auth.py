@@ -48,7 +48,7 @@ class RefreshToken(Base):
 
 
 class DeviceToken(Base):
-    """Long-lived device tokens for capture clients. Schema-only in M1 (no endpoints)."""
+    """Long-lived capture-scope tokens for phone clients (managed via /auth/device-tokens)."""
 
     __tablename__ = "device_token"
 
@@ -60,6 +60,9 @@ class DeviceToken(Base):
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     scopes: Mapped[str] = mapped_column(String(255), default="capture")
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
+    # Nullable to match migration 0006 (SQLite ADD COLUMN forbids non-constant
+    # defaults); the ORM default fills every new row, old rows were backfilled.
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, default=None)
 

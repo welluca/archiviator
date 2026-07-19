@@ -2,6 +2,7 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
   FolderOpen,
+  Camera,
   Search,
   Map,
   QrCode,
@@ -18,6 +19,7 @@ interface SidebarProps {
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/browse', icon: FolderOpen, label: 'Browse' },
+  { to: '/intake', icon: Camera, label: 'Intake' },
   { to: '/search', icon: Search, label: 'Search' },
   { to: '/house-map', icon: Map, label: 'House Map' },
   { to: '/labels', icon: QrCode, label: 'Labels' },

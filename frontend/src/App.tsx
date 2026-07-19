@@ -5,6 +5,7 @@ import Layout from './components/layout/Layout';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import BrowsePage from './pages/BrowsePage';
+import IntakePage from './pages/IntakePage';
 import EntityDetailPage from './pages/EntityDetailPage';
 import SearchPage from './pages/SearchPage';
 import LabelsPage from './pages/LabelsPage';
@@ -42,6 +43,7 @@ export default function App() {
       >
         <Route path="/" element={<DashboardPage />} />
         <Route path="/browse" element={<BrowsePage />} />
+        <Route path="/intake" element={<IntakePage />} />
         <Route path="/entity/:id" element={<EntityDetailPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="/house-map" element={<ComingSoonPage title="House Map" />} />
