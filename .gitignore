@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+frontend/dist/
+
+# App data (lives in C:\archiviator-data, but just in case)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Secrets
+credentials/
+token*.json
+client_secret*.json
+.env
+
+# OS / editor
+Thumbs.db
+.vscode/
+*.log
