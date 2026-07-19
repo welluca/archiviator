@@ -117,15 +117,25 @@ def update_meta(db: Session, attachment_id: int, changes: dict) -> Attachment:
 
 def delete_attachment(db: Session, attachment_id: int) -> None:
     """Delete the row; unlink files only if no other row shares the content hash.
-    If it was the owning entity's cover, the cover clears."""
+    If it was the owning entity's cover, the cover clears. drive_link rows also
+    drop their cached Drive thumbnails (best-effort — the cache is regenerable,
+    same tradeoff as the media unlinks)."""
     attachment = _get_attachment(db, attachment_id)
     entity = db.get(Entity, attachment.entity_id)
     if entity is not None and entity.cover_attachment_id == attachment.id:
         entity.cover_attachment_id = None
     content_hash = attachment.content_hash
+    drive_file_id = attachment.drive_file_id if attachment.type == "drive_link" else None
     db.delete(attachment)
     db.commit()
     media.delete_files_if_unreferenced(db, content_hash, exclude_attachment_id=attachment_id)
+    if drive_file_id:
+        from app.services import drive as drive_svc
+
+        try:
+            drive_svc.delete_cached_thumbs(drive_file_id)
+        except OSError:
+            pass
 
 
 def set_cover(db: Session, entity_id: int, attachment_id: int | None) -> Entity:

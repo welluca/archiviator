@@ -4,7 +4,7 @@ import secrets
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import PrivateAttr
+from pydantic import Field, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     # In-process APScheduler (nightly backups); ARCHIVIATOR_SCHEDULER_ENABLED=false
     # disables it (tests must never spawn jobs).
     scheduler_enabled: bool = True
+    # M9: path to the Google OAuth client secret (client_secret_*.json). Env
+    # override wins; otherwise the meta key 'gdrive_credentials_file' (set via
+    # PUT /drive/config) is used. The file is only ever READ in place.
+    gdrive_credentials_file: str | None = Field(
+        default=None, validation_alias="ARCHIVIATOR_GDRIVE_CREDENTIALS"
+    )
 
     _jwt_secret: str | None = PrivateAttr(default=None)
 

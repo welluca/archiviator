@@ -12,7 +12,7 @@ import MapPage from './pages/MapPage';
 import LabelsPage from './pages/LabelsPage';
 import ScanLandingPage from './pages/ScanLandingPage';
 import AdminPage from './pages/AdminPage';
-import ComingSoonPage from './pages/ComingSoonPage';
+import DrivePage from './pages/DrivePage';
 
 export default function App() {
   const { isAuthenticated } = useAuth();
@@ -51,7 +51,7 @@ export default function App() {
         {/* Pre-M8 bookmarks */}
         <Route path="/house-map" element={<Navigate to="/map" replace />} />
         <Route path="/labels" element={<LabelsPage />} />
-        <Route path="/drive" element={<ComingSoonPage title="Drive" />} />
+        <Route path="/drive" element={<DrivePage />} />
         <Route path="/admin" element={<AdminPage />} />
       </Route>
 

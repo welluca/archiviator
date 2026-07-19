@@ -6,7 +6,7 @@ import {
   Search,
   Map,
   QrCode,
-  HardDrive,
+  Cloud,
   Shield,
   X,
 } from 'lucide-react';
@@ -23,7 +23,7 @@ const navItems = [
   { to: '/search', icon: Search, label: 'Search' },
   { to: '/map', icon: Map, label: 'House Map' },
   { to: '/labels', icon: QrCode, label: 'Labels' },
-  { to: '/drive', icon: HardDrive, label: 'Drive' },
+  { to: '/drive', icon: Cloud, label: 'Drive' },
   { to: '/admin', icon: Shield, label: 'Admin' },
 ];
 

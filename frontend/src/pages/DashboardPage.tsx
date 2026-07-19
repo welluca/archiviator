@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock,
+  Cloud,
   Loader2,
   Package,
   XCircle,
@@ -17,6 +18,7 @@ import {
 import apiClient from '../api/client';
 import { entitiesApi } from '../api/entities';
 import { inventoryApi } from '../api/inventory';
+import { driveApi } from '../api/drive';
 import EntityIcon from '../components/browse/EntityIcon';
 import { formatMoney, formatQuantity } from '../utils/format';
 import type { Entity, HealthResponse, ValuationOut } from '../types';
@@ -67,19 +69,22 @@ export default function DashboardPage() {
   const [lowStock, setLowStock] = useState<Entity[] | null>(null);
   const [showAllLowStock, setShowAllLowStock] = useState(false);
   const [recent, setRecent] = useState<Entity[] | null>(null);
+  const [driveNewCount, setDriveNewCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     const loadAll = async () => {
       // Independent loads — one failing endpoint must not blank the others.
-      const [healthR, treeR, valuationR, lowStockR, recentR] = await Promise.allSettled([
-        apiClient.get<HealthResponse>('/health').then((r) => r.data),
-        entitiesApi.getTree(),
-        inventoryApi.valuation(),
-        inventoryApi.lowStock(),
-        inventoryApi.recent(),
-      ]);
+      const [healthR, treeR, valuationR, lowStockR, recentR, driveR] =
+        await Promise.allSettled([
+          apiClient.get<HealthResponse>('/health').then((r) => r.data),
+          entitiesApi.getTree(),
+          inventoryApi.valuation(),
+          inventoryApi.lowStock(),
+          inventoryApi.recent(),
+          driveApi.status(),
+        ]);
       if (cancelled) return;
       if (healthR.status === 'fulfilled') setHealth(healthR.value);
       else setHealthError(healthR.reason?.message || 'Backend unreachable');
@@ -92,6 +97,7 @@ export default function DashboardPage() {
       if (valuationR.status === 'fulfilled') setValuation(valuationR.value);
       if (lowStockR.status === 'fulfilled') setLowStock(lowStockR.value);
       if (recentR.status === 'fulfilled') setRecent(recentR.value);
+      if (driveR.status === 'fulfilled') setDriveNewCount(driveR.value.inbox_counts.new);
       setLoading(false);
     };
     loadAll();
@@ -169,6 +175,21 @@ export default function DashboardPage() {
           amber={lowCount > 0}
         />
       </div>
+
+      {/* M9: Drive scans inbox chip — only while there is something to triage */}
+      {driveNewCount > 0 && (
+        <Link
+          to="/drive"
+          className="group -mt-2 mb-5 flex items-center gap-2.5 w-fit px-3 py-2 rounded-lg bg-blue-900/20 border border-blue-700/40 hover:border-blue-500/60 transition-colors"
+        >
+          <Cloud className="w-4 h-4 text-blue-400 shrink-0" />
+          <span className="text-sm text-white">
+            {driveNewCount} new scan{driveNewCount === 1 ? '' : 's'}
+          </span>
+          <span className="text-xs text-gray-500">in the Drive inbox</span>
+          <ChevronRight className="w-4 h-4 text-gray-500 group-hover:text-white transition-colors shrink-0" />
+        </Link>
+      )}
 
       {/* Low stock list */}
       {lowCount > 0 && (

@@ -31,13 +31,26 @@ class AttachmentOut(BaseModel):
     type: Literal["photo", "document", "drive_link"]
     title: str | None
     sort_order: int
-    mime: str
-    byte_size: int
+    # Optional since M9: drive_link rows may lack a mime/size (Google Docs
+    # report no size); stored photo/document rows always carry both.
+    mime: str | None
+    byte_size: int | None
     width: int | None
     height: int | None
     is_cover: bool
     urls: dict[str, str]
+    # M9: 'ok' | 'missing' | 'changed' for drive_link rows, None otherwise.
+    drive_status: str | None = None
+    # M9: Drive id + denormalized file name for drive_link rows (the frontend
+    # renders drive_name and keys thumbnails by drive_file_id); None otherwise.
+    drive_file_id: str | None = None
+    drive_name: str | None = None
     created_at: datetime
+
+
+class DriveAttachIn(BaseModel):
+    file_id: str
+    title: str | None = None
 
 
 class AttachmentUpdate(BaseModel):
@@ -75,11 +88,21 @@ def domain_errors():
 
 
 def _att_out(attachment: Attachment, cover_attachment_id: int | None) -> AttachmentOut:
-    urls = {"original": f"/media/{attachment.file_path}"}
-    if attachment.display_path:
-        urls["display"] = f"/media/{attachment.display_path}"
-    if attachment.thumb_path:
-        urls["thumb"] = f"/media/{attachment.thumb_path}"
+    if attachment.type == "drive_link":
+        # No stored file: open-in-Drive link + the cached thumbnail when the
+        # /drive/thumbnail ensure endpoint has populated drive-cache/.
+        from app.services import drive as drive_svc
+
+        urls = {"open": f"https://drive.google.com/file/d/{attachment.drive_file_id}/view"}
+        thumb = drive_svc.cached_thumb_url(attachment.drive_file_id)
+        if thumb:
+            urls["thumb"] = thumb
+    else:
+        urls = {"original": f"/media/{attachment.file_path}"}
+        if attachment.display_path:
+            urls["display"] = f"/media/{attachment.display_path}"
+        if attachment.thumb_path:
+            urls["thumb"] = f"/media/{attachment.thumb_path}"
     return AttachmentOut(
         id=attachment.id,
         entity_id=attachment.entity_id,
@@ -92,6 +115,9 @@ def _att_out(attachment: Attachment, cover_attachment_id: int | None) -> Attachm
         height=attachment.height,
         is_cover=attachment.id == cover_attachment_id,
         urls=urls,
+        drive_status=attachment.drive_status if attachment.type == "drive_link" else None,
+        drive_file_id=attachment.drive_file_id if attachment.type == "drive_link" else None,
+        drive_name=attachment.drive_name if attachment.type == "drive_link" else None,
         created_at=attachment.created_at,
     )
 
@@ -116,6 +142,23 @@ async def upload_attachment(
     data = await file.read(media.MAX_UPLOAD + 1)
     with domain_errors():
         attachment = svc.create_attachment(db, entity_id, data, title=title)
+    return _att_out(attachment, _cover_id(db, entity_id))
+
+
+@router.post(
+    "/entities/{entity_id}/attachments/drive",
+    response_model=AttachmentOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def attach_drive_file(entity_id: int, payload: DriveAttachIn, db: DbSession):
+    """M9: attach ANY Drive file (picked via /drive/browse) as a drive_link.
+    Plain def — the metadata fetch is a network call (threadpool)."""
+    from app.services import drive as drive_svc
+
+    with domain_errors():
+        attachment = drive_svc.attach_file(
+            db, entity_id, payload.file_id, title=payload.title
+        )
     return _att_out(attachment, _cover_id(db, entity_id))
 
 

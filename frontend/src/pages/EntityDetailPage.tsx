@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { AxiosError } from 'axios';
 import {
+  AlertTriangle,
   Camera,
   ChevronRight,
+  Cloud,
   Copy,
   ExternalLink,
   FileText,
@@ -16,6 +18,7 @@ import {
 } from 'lucide-react';
 import { entitiesApi, apiErrorDetail } from '../api/entities';
 import { attachmentsApi } from '../api/attachments';
+import { driveApi, getCachedDriveStatus } from '../api/drive';
 import { duplicateEntity } from '../api/metadata';
 import { useToast } from '../components/ui/Toast';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
@@ -27,8 +30,9 @@ import TagsEditor from '../components/entity/TagsEditor';
 import CategoryFieldsSection from '../components/entity/CategoryFieldsSection';
 import InventorySection from '../components/entity/InventorySection';
 import LayoutSection from '../components/map/LayoutSection';
+import DriveBrowseModal from '../components/drive/DriveBrowseModal';
 import { formatBytes } from '../utils/format';
-import type { Attachment, Entity, PathSegment } from '../types';
+import type { Attachment, DriveStatus, Entity, PathSegment } from '../types';
 import { KIND_META } from '../types';
 
 const isUploadable = (f: File): boolean =>
@@ -53,6 +57,10 @@ export default function EntityDetailPage() {
   const [dragOver, setDragOver] = useState(false);
   const [kebabOpen, setKebabOpen] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
+
+  // M9: Drive attach — module-cached status decides if the button shows at all.
+  const [driveStatus, setDriveStatus] = useState<DriveStatus | null>(null);
+  const [driveModalOpen, setDriveModalOpen] = useState(false);
 
   const photoInputRef = useRef<HTMLInputElement>(null);
   const docInputRef = useRef<HTMLInputElement>(null);
@@ -118,8 +126,21 @@ export default function EntityDetailPage() {
     load();
   }, [load]);
 
+  // M9: cached (60s TTL) — no extra status request on every entity navigation.
+  useEffect(() => {
+    let cancelled = false;
+    getCachedDriveStatus().then((s) => {
+      if (!cancelled) setDriveStatus(s);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const photos = attachments.filter((a) => a.type === 'photo');
   const documents = attachments.filter((a) => a.type === 'document');
+  const driveLinks = attachments.filter((a) => a.type === 'drive_link');
+  const driveConnected = driveStatus?.connected === true;
 
   // ── Uploads (sequential, with n-of-m progress) ────────────────────────────
   const uploadFiles = async (files: File[]) => {
@@ -194,6 +215,19 @@ export default function EntityDetailPage() {
     } catch (err) {
       setDeleteTarget(null);
       toast.error(apiErrorDetail(err, 'Failed to delete attachment'));
+    }
+  };
+
+  // ── M9: attach a browsed Drive file as a drive_link ───────────────────────
+  const handleAttachDriveFile = async (file: { id: string; name: string }) => {
+    try {
+      await driveApi.attachDriveFile(entityId, file.id);
+      setDriveModalOpen(false);
+      toast.success(`Linked “${file.name}” from Drive`);
+      await load();
+    } catch (err) {
+      // 409 = this file is already linked on this entity.
+      toast.error(apiErrorDetail(err, 'Failed to attach the Drive file'));
     }
   };
 
@@ -314,6 +348,17 @@ export default function EntityDetailPage() {
             <FileUp className="w-4 h-4" />
             <span className="hidden sm:inline">Add document</span>
           </button>
+          {/* M9: only offered while Drive is actually connected */}
+          {driveConnected && (
+            <button
+              onClick={() => setDriveModalOpen(true)}
+              title="Attach a file from Google Drive"
+              className="flex items-center gap-1.5 px-3 py-2 bg-space-800 hover:bg-space-700 text-gray-300 border border-space-600 rounded-lg text-sm transition-colors"
+            >
+              <Cloud className="w-4 h-4" />
+              <span className="hidden sm:inline">From Drive</span>
+            </button>
+          )}
 
           {/* Header kebab */}
           <div className="relative shrink-0" ref={kebabRef}>
@@ -430,8 +475,8 @@ export default function EntityDetailPage() {
         </div>
       </section>
 
-      {/* Documents */}
-      {documents.length > 0 && (
+      {/* Documents (local PDFs + M9 Drive links) */}
+      {(documents.length > 0 || driveLinks.length > 0) && (
         <section className="mt-6">
           <h2 className="text-sm font-semibold text-white mb-2">Documents</h2>
           <div className="space-y-1">
@@ -465,6 +510,61 @@ export default function EntityDetailPage() {
                 </button>
               </div>
             ))}
+
+            {driveLinks.map((att) => (
+              <div
+                key={att.id}
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg border border-transparent hover:border-space-700 hover:bg-space-900 transition-colors"
+              >
+                {att.urls.thumb ? (
+                  <img
+                    src={att.urls.thumb}
+                    alt=""
+                    loading="lazy"
+                    className="w-8 h-8 rounded-md object-cover border border-space-700 shrink-0"
+                  />
+                ) : (
+                  <Cloud className="w-5 h-5 text-blue-400 shrink-0" />
+                )}
+                <span className="flex-1 min-w-0 text-sm text-white truncate">
+                  {att.title || att.drive_name || 'Drive file'}
+                </span>
+                {(att.drive_status === 'missing' || att.drive_status === 'changed') && (
+                  <span
+                    title={
+                      att.drive_status === 'missing'
+                        ? 'This file was deleted or trashed in Drive'
+                        : 'This file changed in Drive since it was linked'
+                    }
+                    className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-900/40 border border-amber-700/40 text-amber-500 shrink-0"
+                  >
+                    <AlertTriangle className="w-3 h-3" />
+                    {att.drive_status}
+                  </span>
+                )}
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-900/40 border border-blue-700/40 text-blue-400 shrink-0">
+                  Drive
+                </span>
+                {att.urls.open && (
+                  <a
+                    href={att.urls.open}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open in Google Drive"
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-gray-400 hover:text-white hover:bg-space-700 transition-colors shrink-0"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" /> open
+                  </a>
+                )}
+                <button
+                  onClick={() => setDeleteTarget(att)}
+                  title="Remove the Drive link (the file stays in Drive)"
+                  className="p-1.5 rounded-md text-gray-500 hover:text-red-400 hover:bg-space-700 transition-colors shrink-0"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
           </div>
         </section>
       )}
@@ -479,13 +579,36 @@ export default function EntityDetailPage() {
         />
       )}
 
+      {/* M9: Drive file browser rooted at the scans folder, navigable up */}
+      <DriveBrowseModal
+        open={driveModalOpen}
+        mode="file"
+        title="Attach from Google Drive"
+        root={driveStatus?.scans_folder ?? undefined}
+        onClose={() => setDriveModalOpen(false)}
+        onPickFile={(f) => handleAttachDriveFile(f)}
+      />
+
       <ConfirmDialog
         open={deleteTarget !== null}
-        title={deleteTarget?.type === 'document' ? 'Delete document' : 'Delete photo'}
-        message={`Permanently delete “${
-          deleteTarget?.title || (deleteTarget?.type === 'document' ? 'PDF document' : 'this photo')
-        }”? This cannot be undone.`}
-        confirmLabel="Delete"
+        title={
+          deleteTarget?.type === 'drive_link'
+            ? 'Remove Drive link'
+            : deleteTarget?.type === 'document'
+              ? 'Delete document'
+              : 'Delete photo'
+        }
+        message={
+          deleteTarget?.type === 'drive_link'
+            ? `Remove the link to “${
+                deleteTarget?.title || deleteTarget?.drive_name || 'this Drive file'
+              }”? The file itself stays untouched in Google Drive.`
+            : `Permanently delete “${
+                deleteTarget?.title ||
+                (deleteTarget?.type === 'document' ? 'PDF document' : 'this photo')
+              }”? This cannot be undone.`
+        }
+        confirmLabel={deleteTarget?.type === 'drive_link' ? 'Remove link' : 'Delete'}
         variant="danger"
         onConfirm={handleDelete}
         onCancel={() => setDeleteTarget(null)}

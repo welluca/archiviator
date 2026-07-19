@@ -23,8 +23,10 @@ from app.services import backup, io_csv, search
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
 
-# Everything in data_dir the ZIP archive carries; derived/ is EXCLUDED because
-# thumbnails/display sizes are regenerable from the originals.
+# Everything in data_dir the ZIP archive carries — an INCLUDE list, so anything
+# not named here is excluded by construction: derived/ (regenerable), backups/
+# and secret.key (must never ship), and since M9 gdrive/ (the OAuth token —
+# a live Drive credential) and drive-cache/ (regenerable Drive thumbnails).
 ZIP_DIRS = ("attachments", "labels", "floorplans")
 
 

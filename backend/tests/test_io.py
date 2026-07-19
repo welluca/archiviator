@@ -662,9 +662,17 @@ def test_export_zip_contents(client, auth):
 
 def test_export_zip_excludes_backups_secrets_and_wal(client, auth):
     # Pin the exclusion list: backups and the JWT secret must NEVER ship in the
-    # archive, and no raw -wal journal may leak alongside the snapshot.
+    # archive, and no raw -wal journal may leak alongside the snapshot. Since
+    # M9 the same holds for gdrive/ (the OAuth token — a live Drive credential)
+    # and drive-cache/ (regenerable Drive thumbnails).
     assert client.post(f"{API}/admin/backup-now", headers=auth).status_code == 200
     assert (_data_dir() / "secret.key").is_file()
+    gdrive_dir = _data_dir() / "gdrive"
+    gdrive_dir.mkdir(exist_ok=True)
+    (gdrive_dir / "token.json").write_text("{}", encoding="utf-8")  # inert fake token
+    cache_dir = _data_dir() / "drive-cache"
+    cache_dir.mkdir(exist_ok=True)
+    (cache_dir / "zip-pin.jpg").write_bytes(b"\xff\xd8x")
 
     resp = client.get(f"{API}/admin/export.zip", headers=auth)
     assert resp.status_code == 200, resp.text
@@ -672,24 +680,37 @@ def test_export_zip_excludes_backups_secrets_and_wal(client, auth):
     assert not any(n.startswith("backups/") for n in names)
     assert "secret.key" not in names
     assert not any(n.endswith(".db-wal") for n in names)
+    assert not any(n.startswith("gdrive/") for n in names)
+    assert not any(n.startswith("drive-cache/") for n in names)
 
 
 # --- scheduler ----------------------------------------------------------------
 
 
-def test_build_scheduler_registers_nightly_job():
+def test_build_scheduler_registers_nightly_and_drive_poll_jobs():
+    from apscheduler.triggers.interval import IntervalTrigger
+
     from app.config import get_settings
-    from app.services.scheduler import NIGHTLY_JOB_ID, build_scheduler, nightly_backup
+    from app.services.scheduler import (
+        DRIVE_POLL_JOB_ID,
+        NIGHTLY_JOB_ID,
+        build_scheduler,
+        drive_poll,
+        nightly_backup,
+    )
 
     scheduler = build_scheduler(get_settings())
-    jobs = scheduler.get_jobs()
-    assert len(jobs) == 1
-    job = jobs[0]
-    assert job.id == NIGHTLY_JOB_ID
+    jobs = {job.id: job for job in scheduler.get_jobs()}
+    assert set(jobs) == {NIGHTLY_JOB_ID, DRIVE_POLL_JOB_ID}
+    job = jobs[NIGHTLY_JOB_ID]
     assert job.func is nightly_backup
     fields = {f.name: str(f) for f in job.trigger.fields}
     assert fields["hour"] == "3"
     assert fields["minute"] == "30"
+    # M9: the Drive poll interval comes from drive_account.poll_interval_min.
+    poll = jobs[DRIVE_POLL_JOB_ID]
+    assert poll.func is drive_poll
+    assert isinstance(poll.trigger, IntervalTrigger)
 
 
 def test_nightly_job_body_runs_directly(client):

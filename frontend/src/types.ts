@@ -186,11 +186,14 @@ export interface Preset {
 export type AttachmentType = 'photo' | 'document' | 'drive_link';
 
 export interface AttachmentUrls {
-  original: string;
+  /** Local file path — absent on drive_link rows (the file lives in Drive). */
+  original?: string;
   /** 1600px display derivative (photos only). */
   display?: string;
-  /** 320px thumb derivative (photos only). */
+  /** 320px thumb derivative (photos), or cached Drive thumb (drive_link). */
   thumb?: string;
+  /** M9 drive_link only: open-in-Drive web URL. */
+  open?: string;
 }
 
 export interface Attachment {
@@ -206,6 +209,11 @@ export interface Attachment {
   is_cover: boolean;
   urls: AttachmentUrls;
   created_at: string;
+  // ── M9 drive_link denormalized Drive metadata ─────────────────────────────
+  drive_file_id?: string | null;
+  drive_name?: string | null;
+  /** 'ok' | 'missing' (deleted/trashed in Drive) | 'changed' (md5 drifted). */
+  drive_status?: DriveFileStatus | null;
 }
 
 // ── M5: Labels & asset tags ──────────────────────────────────────────────────
@@ -321,6 +329,68 @@ export const KIND_ORDER: Record<EntityKind, number> = {
  * `entity.protected`, which the server keys to the seeded row's identity. */
 export const isInboxRoot = (e: Entity): boolean =>
   e.protected || (e.kind === 'space' && e.subtype === 'inbox' && e.parent_id === null);
+
+// ── M9: Google Drive — scans inbox, drive_link attachments, backup push ──────
+
+export type DriveFileStatus = 'ok' | 'missing' | 'changed';
+
+export type ScanInboxStatus = 'new' | 'attached' | 'ignored';
+
+/** GET /drive/status — single-account connection + settings snapshot. */
+export interface DriveStatus {
+  /** A client-secret path is configured (env or meta key). */
+  configured: boolean;
+  /** A valid OAuth token exists (token.json cached server-side). */
+  connected: boolean;
+  /** A server-side OAuth consent flow is currently running. */
+  connect_pending: boolean;
+  email: string | null;
+  scans_folder: { id: string; name: string } | null;
+  poll_interval_min: number;
+  backup_upload_enabled: boolean;
+  last_poll_at: string | null;
+  last_backup_upload_at: string | null;
+  inbox_counts: { new: number; attached: number; ignored: number };
+}
+
+export interface DriveBrowseFolder {
+  id: string;
+  name: string;
+}
+
+export interface DriveBrowseFile {
+  id: string;
+  name: string;
+  /** Drive may omit the mime type for some items. */
+  mime: string | null;
+  modified_time: string | null;
+  size: number | null;
+}
+
+/** GET /drive/browse?folder_id=… — one level of a Drive folder. */
+export interface DriveBrowseResult {
+  folders: DriveBrowseFolder[];
+  files: DriveBrowseFile[];
+}
+
+/** Row of the scans inbox (poller-discovered files in the scans folder). */
+export interface ScanInboxRow {
+  id: number;
+  drive_file_id: string;
+  name: string;
+  mime: string;
+  modified_time: string | null;
+  md5: string | null;
+  size_bytes: number | null;
+  discovered_at: string;
+  status: ScanInboxStatus;
+  attachment_id: number | null;
+  /** Present on attached rows when the backend resolves the attachment's entity. */
+  entity_id?: number | null;
+  entity_name?: string | null;
+  /** Set when the server already has the thumbnail cached. */
+  thumbnail_url?: string | null;
+}
 
 // ── M8: House map — floor plans, regions, furniture grids ────────────────────
 

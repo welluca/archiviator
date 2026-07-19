@@ -58,8 +58,28 @@ migration: `.venv\Scripts\alembic revision -m "..."` in `backend/`.
 - Google Drive integration (M9) reuses the gdriveexchanger OAuth client; the Google Cloud
   consent screen must be **"In production"**, otherwise refresh tokens expire every 7 days.
 
+## Google Drive setup (one-time)
+
+1. Admin → Drive page: paste the path to your existing OAuth client secret JSON
+   (the `client_secret_*.json` in gdriveexchanger's credentials folder — referenced
+   in place, never copied). **The Google Cloud consent screen must be "In
+   production"**, otherwise refresh tokens die every 7 days.
+2. Click Connect — a browser window opens **on this PC** for the one-time consent.
+3. Pick your scans folder; new scans then appear in the Drive inbox for attaching
+   to catalog entries. Optionally enable nightly backup upload (folder
+   "Archiviator Backups", newest 7 kept).
+
+## iOS Shortcuts quick capture (optional)
+
+Admin → Device tokens → create one. Shortcut: Scan QR → Take Photo →
+Get Contents of URL: POST `https://threadripper.tail3670c0.ts.net/api/v1/intake/capture`,
+Request Body = Form with the photo as field `file`, header
+`Authorization: Bearer <token>`. The token can ONLY capture — it cannot read or
+delete anything.
+
 ## Milestones
 
-M1 walking skeleton ✔ · M2 entity tree · M3 photos/attachments · M4 metadata+search ·
-M5 QR+labels · M6 inventory+seeding+backups · M7 rapid intake · M8 house map · M9 Google Drive.
+All complete: M1 skeleton · M2 entity tree · M3 photos/attachments ·
+M4 metadata+search · M5 QR+labels · M6 inventory+seeding+backups ·
+M7 rapid intake · M8 house map · M9 Google Drive. 371 backend tests.
 Full plan: `C:\Users\Luca\.claude\plans\i-want-to-start-quirky-mountain.md`

@@ -15,6 +15,7 @@ from app.routers import (
     admin,
     attachments,
     auth,
+    drive,
     entities,
     intake,
     inventory,
@@ -116,6 +117,7 @@ def create_app() -> FastAPI:
     app.include_router(intake.router, prefix="/api/v1", tags=["intake"])
     app.include_router(intake.capture_router, prefix="/api/v1", tags=["intake"])
     app.include_router(house_map.router, prefix="/api/v1", tags=["map"])
+    app.include_router(drive.router, prefix="/api/v1/drive", tags=["drive"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
     # /media must be registered BEFORE the SPA catch-all mount (unauthenticated
     # by design — see app/routers/media.py for the tradeoff).

@@ -23,6 +23,9 @@ dependencies = [
     "qrcode[pil]",
     "reportlab",
     "apscheduler",
+    "google-api-python-client",
+    "google-auth-oauthlib",
+    "google-auth-httplib2",
 ]
 
 [project.optional-dependencies]

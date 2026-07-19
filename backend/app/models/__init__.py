@@ -2,6 +2,7 @@
 
 from app.models.attachment import Attachment  # noqa: F401
 from app.models.auth import DeviceToken, RefreshToken, User  # noqa: F401
+from app.models.drive import DriveAccount, ScanInbox  # noqa: F401
 from app.models.entity import Entity  # noqa: F401
 from app.models.labels import (  # noqa: F401
     LabelBatch,

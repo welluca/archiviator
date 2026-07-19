@@ -84,8 +84,12 @@ def test_upload_jpeg_shape_and_title(client, auth):
     assert set(a.keys()) == {
         "id", "entity_id", "type", "title", "sort_order", "mime", "byte_size",
         "width", "height", "is_cover", "urls", "created_at",
+        "drive_status", "drive_file_id", "drive_name",  # M9 drive_link fields
     }
     assert a["entity_id"] == e["id"]
+    assert a["drive_status"] is None  # stored photo, not a drive_link
+    assert a["drive_file_id"] is None
+    assert a["drive_name"] is None
     assert a["type"] == "photo"
     assert a["title"] == "My photo"
     assert a["sort_order"] == 0
