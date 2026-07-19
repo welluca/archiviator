@@ -11,7 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app import __version__
 from app.config import get_settings
 from app.database import run_migrations
-from app.routers import auth
+from app.routers import auth, entities
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -81,6 +81,7 @@ def create_app() -> FastAPI:
         return {"status": "ok", "app": "archiviator", "version": __version__}
 
     app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
+    app.include_router(entities.router, prefix="/api/v1/entities", tags=["entities"])
 
     # Production: serve the built frontend as an SPA (non-/api paths fall back to index.html).
     frontend_dist = BACKEND_DIR.parent / "frontend" / "dist"

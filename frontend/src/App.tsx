@@ -4,6 +4,7 @@ import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import Layout from './components/layout/Layout';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
+import BrowsePage from './pages/BrowsePage';
 import ComingSoonPage from './pages/ComingSoonPage';
 
 export default function App() {
@@ -24,7 +25,7 @@ export default function App() {
         }
       >
         <Route path="/" element={<DashboardPage />} />
-        <Route path="/browse" element={<ComingSoonPage title="Browse" />} />
+        <Route path="/browse" element={<BrowsePage />} />
         <Route path="/search" element={<ComingSoonPage title="Search" />} />
         <Route path="/house-map" element={<ComingSoonPage title="House Map" />} />
         <Route path="/labels" element={<ComingSoonPage title="Labels" />} />

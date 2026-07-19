@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Activity, CheckCircle2, XCircle, Loader2, Hammer } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Activity, CheckCircle2, XCircle, Loader2, Hammer, FolderOpen, ArrowRight } from 'lucide-react';
 import apiClient from '../api/client';
 import type { HealthResponse } from '../types';
 
@@ -63,6 +64,23 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {/* Browse card (M2) */}
+      <Link
+        to="/browse"
+        className="group flex items-center gap-4 bg-space-900 border border-space-700 hover:border-blue-500/50 rounded-xl p-6 mb-4 transition-colors"
+      >
+        <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/30 flex items-center justify-center shrink-0">
+          <FolderOpen className="w-5 h-5 text-blue-400" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-lg font-semibold text-white">Browse</h2>
+          <p className="text-gray-400 text-sm">
+            Explore your spaces, furniture, containers, and items.
+          </p>
+        </div>
+        <ArrowRight className="w-5 h-5 text-gray-600 group-hover:text-blue-400 transition-colors shrink-0" />
+      </Link>
 
       {/* M1 note */}
       <div className="bg-space-900 border border-space-700 rounded-xl p-6">
