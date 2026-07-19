@@ -298,7 +298,9 @@ def delete_entity(db: Session, entity_id: int) -> None:
         raise RuleViolation("Cannot delete an entity that has children (archive it instead)")
     # The FK cascade removes attachment rows silently — collect their hashes first
     # so the refcounted file cleanup still runs for whatever becomes unreferenced.
+    # Imports inside the function (like the media hook) to avoid service cycles.
     from app.models.attachment import Attachment
+    from app.services import labels as labels_svc
     from app.services import media
 
     hashes = set(
@@ -308,6 +310,9 @@ def delete_entity(db: Session, entity_id: int) -> None:
             )
         )
     )
+    # A claimed printed label reverts to 'unclaimed' in the same transaction —
+    # the sticker is still physically out there and can be re-bound.
+    labels_svc.release_on_entity_delete(db, entity)
     db.delete(entity)
     db.commit()
     for content_hash in hashes:

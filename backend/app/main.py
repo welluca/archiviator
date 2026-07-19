@@ -11,7 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app import __version__
 from app.config import get_settings
 from app.database import run_migrations
-from app.routers import admin, attachments, auth, entities, media, metadata, search
+from app.routers import admin, attachments, auth, entities, labels, media, metadata, search
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -85,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(entities.router, prefix="/api/v1/entities", tags=["entities"])
     app.include_router(attachments.router, prefix="/api/v1", tags=["attachments"])
     app.include_router(metadata.router, prefix="/api/v1", tags=["metadata"])
+    app.include_router(labels.router, prefix="/api/v1", tags=["labels"])
     app.include_router(search.router, prefix="/api/v1", tags=["search"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
     # /media must be registered BEFORE the SPA catch-all mount (unauthenticated

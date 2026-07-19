@@ -38,6 +38,14 @@ apiClient.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
+/** Hard redirect to /login preserving the current in-app destination as ?next=
+ * (LoginPage returns there after auth) — QR-scan deep links must survive this. */
+const redirectToLogin = () => {
+  if (window.location.pathname === '/login') return;
+  const next = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  window.location.href = `/login?next=${encodeURIComponent(next)}`;
+};
+
 // Response interceptor — on 401 try refresh once, retry original request,
 // otherwise clear tokens and redirect to /login.
 apiClient.interceptors.response.use(
@@ -61,13 +69,11 @@ apiClient.interceptors.response.use(
           return apiClient(originalRequest);
         } catch {
           clearTokens();
-          if (window.location.pathname !== '/login') {
-            window.location.href = '/login';
-          }
+          redirectToLogin();
           return Promise.reject(error);
         }
-      } else if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+      } else {
+        redirectToLogin();
       }
     }
 

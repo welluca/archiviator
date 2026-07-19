@@ -12,7 +12,21 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const from = (location.state as any)?.from?.pathname || '/';
+  // Return-to destination, in priority order:
+  // 1. state.from set by ProtectedRoute (full location incl. search + hash —
+  //    /a/{tag} QR scans while logged out depend on this),
+  // 2. ?next= set by the axios interceptor's hard redirect on refresh failure,
+  // 3. '/'. Only same-origin paths are accepted (no scheme/host injection).
+  const stateFrom = (location.state as any)?.from as
+    | { pathname: string; search?: string; hash?: string }
+    | undefined;
+  const nextParam = new URLSearchParams(location.search).get('next');
+  let from = '/';
+  if (stateFrom?.pathname) {
+    from = `${stateFrom.pathname}${stateFrom.search ?? ''}${stateFrom.hash ?? ''}`;
+  } else if (nextParam && nextParam.startsWith('/') && !nextParam.startsWith('//')) {
+    from = nextParam;
+  }
 
   if (isAuthenticated) {
     navigate(from, { replace: true });

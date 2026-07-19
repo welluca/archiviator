@@ -137,6 +137,65 @@ export interface Attachment {
   created_at: string;
 }
 
+// ── M5: Labels & asset tags ──────────────────────────────────────────────────
+
+export interface LabelTemplate {
+  id: number;
+  name: string;
+  page_w_mm: number;
+  page_h_mm: number;
+  cols: number;
+  rows: number;
+  label_w_mm: number;
+  label_h_mm: number;
+  margin_top_mm: number;
+  margin_left_mm: number;
+  gutter_x_mm: number;
+  gutter_y_mm: number;
+  qr_size_mm: number;
+  show_name: boolean;
+  show_breadcrumb: boolean;
+}
+
+export type PrintedLabelStatus = 'unclaimed' | 'claimed' | 'void';
+
+export interface PrintedLabel {
+  id: number;
+  batch_id: number;
+  asset_tag: string;
+  status: PrintedLabelStatus;
+  entity_id: number | null;
+  claimed_at: string | null;
+  /** Present on batch detail rows when the label is claimed by an entity. */
+  entity_name?: string | null;
+}
+
+export interface LabelBatchStatusCounts {
+  unclaimed: number;
+  claimed: number;
+  void: number;
+}
+
+export interface LabelBatch {
+  id: number;
+  note: string | null;
+  template: LabelTemplate;
+  label_count: number;
+  /** API path of the rendered PDF — download via blob (Bearer), not href. */
+  pdf_url: string;
+  created_at: string;
+  /** Present on the list endpoint. */
+  /** Present on the list endpoint (backend field name: `counts`). */
+  counts?: LabelBatchStatusCounts;
+  /** Present on create + detail responses. */
+  labels?: PrintedLabel[];
+}
+
+/** GET /labels/resolve/{tag} — 404s (unknown/void) surface as axios errors. */
+export type LabelResolveResult =
+  | { status: 'entity'; entity: Entity }
+  | { status: 'unclaimed'; label: { asset_tag: string; batch_id: number } };
+
 export interface PathSegment {
   id: number;
   name: string;

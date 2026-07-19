@@ -20,6 +20,7 @@ import { duplicateEntity } from '../api/metadata';
 import { useToast } from '../components/ui/Toast';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import EntityIcon from '../components/browse/EntityIcon';
+import AssetTagSection from '../components/entity/AssetTagSection';
 import PhotoCard from '../components/entity/PhotoCard';
 import Lightbox from '../components/entity/Lightbox';
 import TagsEditor from '../components/entity/TagsEditor';
@@ -342,6 +343,9 @@ export default function EntityDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* M5: asset tag (QR sticker) block */}
+      <AssetTagSection entity={entity} onEntityUpdate={setEntity} />
 
       {/* Read-only description / notes (editing lives in the Browse rename modal) */}
       {entity.description && (

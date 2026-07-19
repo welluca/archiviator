@@ -20,6 +20,8 @@ dependencies = [
     "aiofiles",
     "pillow",
     "pillow-heif",
+    "qrcode[pil]",
+    "reportlab",
 ]
 
 [project.optional-dependencies]
