@@ -18,6 +18,8 @@ dependencies = [
     "bcrypt",
     "python-multipart",
     "aiofiles",
+    "pillow",
+    "pillow-heif",
 ]
 
 [project.optional-dependencies]

@@ -3,6 +3,7 @@ import {
   Archive,
   ArchiveRestore,
   ChevronRight,
+  Eye,
   FolderInput,
   MoreVertical,
   Pencil,
@@ -12,6 +13,8 @@ import type { Entity } from '../../types';
 import EntityIcon from './EntityIcon';
 
 export interface EntityRowActions {
+  /** Open the entity detail page (photos & documents). */
+  onDetails: (e: Entity) => void;
   onRename: (e: Entity) => void;
   onMove: (e: Entity) => void;
   onArchiveToggle: (e: Entity) => void;
@@ -57,7 +60,22 @@ export function EntityRow({ entity, onOpen, actions }: EntityRowProps) {
         entity.archived ? 'opacity-50' : ''
       }`}
     >
-      <EntityIcon entity={entity} className="w-5 h-5" />
+      {entity.thumb_url ? (
+        // Cover thumb with the kind icon overlaid as a tiny badge
+        <div className="relative shrink-0">
+          <img
+            src={entity.thumb_url}
+            alt=""
+            loading="lazy"
+            className="w-7 h-7 rounded-md object-cover border border-space-700"
+          />
+          <span className="absolute -bottom-1 -right-1 p-0.5 rounded-full bg-space-950 border border-space-700 flex items-center justify-center">
+            <EntityIcon entity={entity} className="w-2.5 h-2.5" />
+          </span>
+        </div>
+      ) : (
+        <EntityIcon entity={entity} className="w-5 h-5" />
+      )}
 
       <div className="flex-1 min-w-0 flex items-center gap-2">
         <span className="text-sm text-white truncate">{entity.name}</span>
@@ -92,6 +110,12 @@ export function EntityRow({ entity, onOpen, actions }: EntityRowProps) {
 
         {menuOpen && (
           <div className="absolute right-0 top-full mt-1 z-30 w-44 bg-space-900 border border-space-700 rounded-lg shadow-lg shadow-black/40 py-1 overflow-hidden">
+            <button
+              onClick={() => runAction(actions.onDetails)}
+              className={`${menuItem} text-gray-300 hover:bg-space-800 hover:text-white`}
+            >
+              <Eye className="w-4 h-4" /> Details
+            </button>
             <button
               onClick={() => runAction(actions.onRename)}
               className={`${menuItem} text-gray-300 hover:bg-space-800 hover:text-white`}

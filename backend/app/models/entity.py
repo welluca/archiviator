@@ -44,6 +44,17 @@ class Entity(Base):
     parent_id: Mapped[int | None] = mapped_column(
         ForeignKey("entity.id", ondelete="RESTRICT"), index=True
     )
+    # Cover photo (an attachment row owned by this entity). use_alter breaks the
+    # entity <-> attachment FK cycle at metadata/DDL level; SQLite clears it via
+    # ON DELETE SET NULL when the attachment goes away.
+    cover_attachment_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "attachment.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_entity_cover_attachment",
+        )
+    )
 
     # Tree caches (see module docstring).
     path: Mapped[str] = mapped_column(Text, default="", index=True)

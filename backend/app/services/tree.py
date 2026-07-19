@@ -290,5 +290,19 @@ def delete_entity(db: Session, entity_id: int) -> None:
     )
     if has_children:
         raise RuleViolation("Cannot delete an entity that has children (archive it instead)")
+    # The FK cascade removes attachment rows silently — collect their hashes first
+    # so the refcounted file cleanup still runs for whatever becomes unreferenced.
+    from app.models.attachment import Attachment
+    from app.services import media
+
+    hashes = set(
+        db.scalars(
+            select(Attachment.content_hash).where(
+                Attachment.entity_id == entity_id, Attachment.content_hash.is_not(None)
+            )
+        )
+    )
     db.delete(entity)
     db.commit()
+    for content_hash in hashes:
+        media.delete_files_if_unreferenced(db, content_hash)

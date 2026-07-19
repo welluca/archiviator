@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AxiosError } from 'axios';
 import {
   ChevronRight,
@@ -23,11 +24,31 @@ import MoveEntityModal from '../components/browse/MoveEntityModal';
 import type { Entity, PathSegment } from '../types';
 import { KIND_META } from '../types';
 
+/** Parse the ?sel= query param into an entity id (or null). */
+const parseSelParam = (params: URLSearchParams): number | null => {
+  const raw = params.get('sel');
+  if (raw === null) return null;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
+};
+
 export default function BrowsePage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const tree = useEntityTree();
+  const [searchParams] = useSearchParams();
 
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  // Initialize the selection from ?sel= so deep links (e.g. the detail page
+  // breadcrumb) land on the right entity; ancestors expand via the reveal effect.
+  const [selectedId, setSelectedId] = useState<number | null>(() =>
+    parseSelParam(searchParams)
+  );
+
+  // Follow later ?sel= changes (e.g. navigate('/browse?sel=X') while mounted).
+  useEffect(() => {
+    const sel = parseSelParam(searchParams);
+    if (sel !== null) setSelectedId(sel);
+  }, [searchParams]);
   const [selectedEntity, setSelectedEntity] = useState<Entity | null>(null);
   const [path, setPath] = useState<PathSegment[]>([]);
   const [children, setChildren] = useState<Entity[]>([]);
@@ -152,10 +173,17 @@ export default function BrowsePage() {
   const noRootsYet = !tree.loading && tree.roots.length === 0;
 
   const rowActions = {
+    onDetails: (e: Entity) => navigate(`/entity/${e.id}`),
     onRename: (e: Entity) => setRenameTarget(e),
     onMove: (e: Entity) => setMoveTarget(e),
     onArchiveToggle: handleArchiveToggle,
     onDelete: (e: Entity) => setDeleteTarget(e),
+  };
+
+  /** Row click: items open their detail page; everything else selects. */
+  const handleOpenRow = (e: Entity) => {
+    if (e.kind === 'item') navigate(`/entity/${e.id}`);
+    else handleSelect(e.id);
   };
 
   return (
@@ -332,7 +360,7 @@ export default function BrowsePage() {
                 <EntityRow
                   key={child.id}
                   entity={child}
-                  onOpen={(e) => handleSelect(e.id)}
+                  onOpen={handleOpenRow}
                   actions={rowActions}
                 />
               ))}

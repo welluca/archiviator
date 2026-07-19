@@ -38,8 +38,39 @@ export interface Entity {
   /** True only for the seeded Inbox root — cannot be moved, deleted, or archived. */
   protected: boolean;
   child_count: number;
+  /** M3: id of the photo attachment used as cover, if any. */
+  cover_attachment_id: number | null;
+  /** M3: 320px thumb URL of the cover photo (unauthenticated /media path). */
+  thumb_url: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// ── M3: Attachments ──────────────────────────────────────────────────────────
+
+export type AttachmentType = 'photo' | 'document' | 'drive_link';
+
+export interface AttachmentUrls {
+  original: string;
+  /** 1600px display derivative (photos only). */
+  display?: string;
+  /** 320px thumb derivative (photos only). */
+  thumb?: string;
+}
+
+export interface Attachment {
+  id: number;
+  entity_id: number;
+  type: AttachmentType;
+  title: string | null;
+  sort_order: number;
+  mime: string;
+  byte_size: number;
+  width: number | null;
+  height: number | null;
+  is_cover: boolean;
+  urls: AttachmentUrls;
+  created_at: string;
 }
 
 export interface PathSegment {

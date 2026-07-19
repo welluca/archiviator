@@ -10,6 +10,11 @@ export default defineConfig({
         target: 'http://127.0.0.1:8422',
         changeOrigin: true,
       },
+      // M3: attachment originals/derivatives are served from /media
+      '/media': {
+        target: 'http://127.0.0.1:8422',
+        changeOrigin: true,
+      },
     },
   },
   build: {
