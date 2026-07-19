@@ -16,6 +16,8 @@ export interface UpdateEntityPayload {
   subtype?: string;
   description?: string;
   notes?: string;
+  /** M4: assign / clear the category (null clears). */
+  category_id?: number | null;
 }
 
 export const entitiesApi = {

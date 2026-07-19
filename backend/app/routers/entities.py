@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from app.dependencies import DbSession, get_current_user
 from app.models.attachment import Attachment
 from app.models.entity import Entity
+from app.models.metadata import EntityTag, Tag
+from app.services import metadata as metadata_svc
 from app.services import tree
 
 router = APIRouter(dependencies=[Depends(get_current_user)])
@@ -41,6 +43,7 @@ class EntityUpdate(BaseModel):
     subtype: str | None = None
     description: str | None = None
     notes: str | None = None
+    category_id: int | None = None
 
     @field_validator("name")
     @classmethod
@@ -57,6 +60,12 @@ class MoveRequest(BaseModel):
     parent_id: int | None
 
 
+class TagBrief(BaseModel):
+    id: int
+    name: str
+    color: str | None
+
+
 class EntityOut(BaseModel):
     id: int
     kind: str
@@ -65,6 +74,7 @@ class EntityOut(BaseModel):
     description: str | None
     notes: str | None
     parent_id: int | None
+    category_id: int | None
     depth: int
     breadcrumb: str
     asset_tag: str | None
@@ -74,6 +84,7 @@ class EntityOut(BaseModel):
     child_count: int
     cover_attachment_id: int | None
     thumb_url: str | None
+    tags: list[TagBrief]
     created_at: datetime
     updated_at: datetime
 
@@ -106,11 +117,31 @@ def _thumb_map(db: Session, entities: list[Entity]) -> dict[int, str]:
     return {att_id: thumb for att_id, thumb in rows if thumb}
 
 
+def _tags_map(db: Session, entities: list[Entity]) -> dict[int, list[TagBrief]]:
+    """{entity_id: [TagBrief]} name-ordered — ONE IN query, no N+1."""
+    ids = [e.id for e in entities]
+    if not ids:
+        return {}
+    rows = db.execute(
+        select(EntityTag.entity_id, Tag)
+        .join(Tag, Tag.id == EntityTag.tag_id)
+        .where(EntityTag.entity_id.in_(ids))
+        .order_by(Tag.name)
+    )
+    out: dict[int, list[TagBrief]] = {}
+    for entity_id, tag in rows:
+        out.setdefault(entity_id, []).append(
+            TagBrief(id=tag.id, name=tag.name, color=tag.color)
+        )
+    return out
+
+
 def _out(
     entity: Entity,
     counts: dict[int, int],
     inbox_id: int | None,
     thumbs: dict[int, str] | None = None,
+    tags: dict[int, list[TagBrief]] | None = None,
 ) -> EntityOut:
     thumb_path = (thumbs or {}).get(entity.cover_attachment_id)
     return EntityOut(
@@ -121,6 +152,7 @@ def _out(
         description=entity.description,
         notes=entity.notes,
         parent_id=entity.parent_id,
+        category_id=entity.category_id,
         depth=entity.depth,
         breadcrumb=entity.breadcrumb,
         asset_tag=entity.asset_tag,
@@ -130,8 +162,20 @@ def _out(
         child_count=counts.get(entity.id, 0),
         cover_attachment_id=entity.cover_attachment_id,
         thumb_url=f"/media/{thumb_path}" if thumb_path else None,
+        tags=(tags or {}).get(entity.id, []),
         created_at=entity.created_at,
         updated_at=entity.updated_at,
+    )
+
+
+def _single_out(db: Session, entity: Entity) -> EntityOut:
+    """_out with the per-entity batch maps — for single-entity responses."""
+    return _out(
+        entity,
+        tree.child_counts(db, [entity.id]),
+        tree.get_inbox_id(db),
+        _thumb_map(db, [entity]),
+        _tags_map(db, [entity]),
     )
 
 
@@ -141,7 +185,8 @@ async def get_tree(db: DbSession, include_archived: bool = False):
     counts = tree.child_counts(db)
     inbox_id = tree.get_inbox_id(db)
     thumbs = _thumb_map(db, entities)
-    return [_out(e, counts, inbox_id, thumbs) for e in entities]
+    tags = _tags_map(db, entities)
+    return [_out(e, counts, inbox_id, thumbs, tags) for e in entities]
 
 
 @router.post("", response_model=EntityOut, status_code=status.HTTP_201_CREATED)
@@ -163,9 +208,7 @@ async def create_entity(payload: EntityCreate, db: DbSession):
 async def get_entity(entity_id: int, db: DbSession):
     with domain_errors():
         entity = tree.get_entity(db, entity_id)
-    return _out(
-        entity, tree.child_counts(db, [entity_id]), tree.get_inbox_id(db), _thumb_map(db, [entity])
-    )
+    return _single_out(db, entity)
 
 
 @router.get("/{entity_id}/children", response_model=list[EntityOut])
@@ -175,7 +218,8 @@ async def get_children(entity_id: int, db: DbSession, include_archived: bool = F
     counts = tree.child_counts(db, [c.id for c in children])
     inbox_id = tree.get_inbox_id(db)
     thumbs = _thumb_map(db, children)
-    return [_out(c, counts, inbox_id, thumbs) for c in children]
+    tags = _tags_map(db, children)
+    return [_out(c, counts, inbox_id, thumbs, tags) for c in children]
 
 
 @router.get("/{entity_id}/path", response_model=list[PathSegment])
@@ -189,36 +233,35 @@ async def get_path(entity_id: int, db: DbSession):
 async def update_entity(entity_id: int, payload: EntityUpdate, db: DbSession):
     with domain_errors():
         entity = tree.update_entity(db, entity_id, payload.model_dump(exclude_unset=True))
-    return _out(
-        entity, tree.child_counts(db, [entity_id]), tree.get_inbox_id(db), _thumb_map(db, [entity])
-    )
+    return _single_out(db, entity)
 
 
 @router.post("/{entity_id}/move", response_model=EntityOut)
 async def move_entity(entity_id: int, payload: MoveRequest, db: DbSession):
     with domain_errors():
         entity = tree.move_entity(db, entity_id, payload.parent_id)
-    return _out(
-        entity, tree.child_counts(db, [entity_id]), tree.get_inbox_id(db), _thumb_map(db, [entity])
-    )
+    return _single_out(db, entity)
+
+
+@router.post("/{entity_id}/duplicate", response_model=EntityOut, status_code=status.HTTP_201_CREATED)
+async def duplicate_entity(entity_id: int, db: DbSession):
+    with domain_errors():
+        entity = metadata_svc.duplicate_entity(db, entity_id)
+    return _single_out(db, entity)
 
 
 @router.post("/{entity_id}/archive", response_model=EntityOut)
 async def archive_entity(entity_id: int, db: DbSession):
     with domain_errors():
         entity = tree.archive_entity(db, entity_id)
-    return _out(
-        entity, tree.child_counts(db, [entity_id]), tree.get_inbox_id(db), _thumb_map(db, [entity])
-    )
+    return _single_out(db, entity)
 
 
 @router.post("/{entity_id}/unarchive", response_model=EntityOut)
 async def unarchive_entity(entity_id: int, db: DbSession):
     with domain_errors():
         entity = tree.unarchive_entity(db, entity_id)
-    return _out(
-        entity, tree.child_counts(db, [entity_id]), tree.get_inbox_id(db), _thumb_map(db, [entity])
-    )
+    return _single_out(db, entity)
 
 
 @router.delete("/{entity_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -14,7 +14,7 @@ from pydantic import BaseModel, field_validator
 from app.dependencies import DbSession, get_current_user
 from app.models.attachment import Attachment
 from app.models.entity import Entity
-from app.routers.entities import EntityOut, _out, _thumb_map
+from app.routers.entities import EntityOut, _single_out
 from app.services import attachments as svc
 from app.services import media, tree
 
@@ -143,6 +143,4 @@ async def delete_attachment(attachment_id: int, db: DbSession):
 async def set_cover(entity_id: int, payload: CoverRequest, db: DbSession):
     with domain_errors():
         entity = svc.set_cover(db, entity_id, payload.attachment_id)
-    return _out(
-        entity, tree.child_counts(db, [entity_id]), tree.get_inbox_id(db), _thumb_map(db, [entity])
-    )
+    return _single_out(db, entity)

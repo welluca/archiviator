@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.models.entity import Entity
 from app.models.meta import Meta
+from app.models.metadata import Category
 from app.utils.dt import utcnow
 
 
@@ -205,6 +206,11 @@ def update_entity(db: Session, entity_id: int, changes: dict) -> Entity:
     for field in ("subtype", "description", "notes"):
         if field in changes:
             setattr(entity, field, changes[field])
+    if "category_id" in changes:
+        category_id = changes["category_id"]
+        if category_id is not None and db.get(Category, category_id) is None:
+            raise NotFoundError(f"Category {category_id} not found")
+        entity.category_id = category_id
     new_name = changes.get("name")
     if new_name is not None:
         new_name = _clean_name(new_name)

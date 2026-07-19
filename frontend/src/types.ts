@@ -42,8 +42,72 @@ export interface Entity {
   cover_attachment_id: number | null;
   /** M3: 320px thumb URL of the cover photo (unauthenticated /media path). */
   thumb_url: string | null;
+  /** M4: category id, or null when uncategorized. */
+  category_id: number | null;
+  /** M4: tags carried by the entity (batched server-side, no N+1). */
+  tags: TagLite[];
   created_at: string;
   updated_at: string;
+}
+
+// ── M4: Tags, categories, custom fields ──────────────────────────────────────
+
+/** Tag shape embedded on EntityOut. */
+export interface TagLite {
+  id: number;
+  name: string;
+  color: string | null;
+}
+
+export interface Tag extends TagLite {
+  /** Number of entities carrying the tag (GET /tags only). */
+  usage_count?: number;
+}
+
+export interface Category {
+  id: number;
+  name: string;
+  icon: string | null;
+  sort_order: number;
+  /** Present when listed with ?with_fields=true. */
+  fields?: FieldDef[];
+}
+
+export type FieldType = 'text' | 'number' | 'date' | 'url';
+
+export interface FieldDef {
+  id: number;
+  /** null = global field def, applies to every category. */
+  category_id: number | null;
+  name: string;
+  type: FieldType;
+  unit: string | null;
+  required: boolean;
+  sort_order: number;
+}
+
+export interface FieldValueOut {
+  def: FieldDef;
+  value_text: string;
+  value_num: number | null;
+  value_date: string | null;
+}
+
+/** Parsed JSON payload of a preset — the backend stores it serialized and
+ * returns it parsed. Known keys are optional; the shape stays open until the
+ * apply-UI lands in M7. */
+export interface PresetPayload {
+  category_id?: number | null;
+  tags?: string[];
+  fields?: { field_def_id?: number; name?: string; value?: string }[];
+  [key: string]: unknown;
+}
+
+export interface Preset {
+  id: number;
+  name: string;
+  /** Parsed JSON payload (NOT the serialized string) — the apply-UI lands in M7. */
+  payload: PresetPayload;
 }
 
 // ── M3: Attachments ──────────────────────────────────────────────────────────

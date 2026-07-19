@@ -4,21 +4,26 @@ import { AxiosError } from 'axios';
 import {
   Camera,
   ChevronRight,
+  Copy,
   ExternalLink,
   FileText,
   FileUp,
   Home,
   ImagePlus,
   Loader2,
+  MoreVertical,
   Trash2,
 } from 'lucide-react';
 import { entitiesApi, apiErrorDetail } from '../api/entities';
 import { attachmentsApi } from '../api/attachments';
+import { duplicateEntity } from '../api/metadata';
 import { useToast } from '../components/ui/Toast';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import EntityIcon from '../components/browse/EntityIcon';
 import PhotoCard from '../components/entity/PhotoCard';
 import Lightbox from '../components/entity/Lightbox';
+import TagsEditor from '../components/entity/TagsEditor';
+import CategoryFieldsSection from '../components/entity/CategoryFieldsSection';
 import { formatBytes } from '../utils/format';
 import type { Attachment, Entity, PathSegment } from '../types';
 import { KIND_META } from '../types';
@@ -43,9 +48,24 @@ export default function EntityDetailPage() {
   const [deleteTarget, setDeleteTarget] = useState<Attachment | null>(null);
   const [uploading, setUploading] = useState<{ done: number; total: number } | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [kebabOpen, setKebabOpen] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
 
   const photoInputRef = useRef<HTMLInputElement>(null);
   const docInputRef = useRef<HTMLInputElement>(null);
+  const kebabRef = useRef<HTMLDivElement>(null);
+
+  // Close the header kebab on outside click.
+  useEffect(() => {
+    if (!kebabOpen) return;
+    const close = (ev: MouseEvent) => {
+      if (kebabRef.current && !kebabRef.current.contains(ev.target as Node)) {
+        setKebabOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [kebabOpen]);
 
   // ── Data loading ──────────────────────────────────────────────────────────
   const load = useCallback(async () => {
@@ -174,6 +194,22 @@ export default function EntityDetailPage() {
     }
   };
 
+  // ── Duplicate (kebab) ─────────────────────────────────────────────────────
+  const handleDuplicate = async () => {
+    if (duplicating) return;
+    setKebabOpen(false);
+    setDuplicating(true);
+    try {
+      const copy = await duplicateEntity(entityId);
+      toast.success(`Duplicated as “${copy.name}”`);
+      navigate(`/entity/${copy.id}`);
+    } catch (err) {
+      toast.error(apiErrorDetail(err, 'Failed to duplicate'));
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────
   if (loading) {
     return (
@@ -275,6 +311,35 @@ export default function EntityDetailPage() {
             <FileUp className="w-4 h-4" />
             <span className="hidden sm:inline">Add document</span>
           </button>
+
+          {/* Header kebab */}
+          <div className="relative shrink-0" ref={kebabRef}>
+            <button
+              onClick={() => setKebabOpen((v) => !v)}
+              aria-label="More actions"
+              className={`p-2 rounded-lg text-gray-400 hover:text-white hover:bg-space-800 border border-space-700 transition-colors ${
+                kebabOpen ? 'text-white bg-space-800' : ''
+              }`}
+            >
+              <MoreVertical className="w-4 h-4" />
+            </button>
+            {kebabOpen && (
+              <div className="absolute right-0 top-full mt-1 z-30 w-44 bg-space-900 border border-space-700 rounded-lg shadow-lg shadow-black/40 py-1 overflow-hidden">
+                <button
+                  onClick={handleDuplicate}
+                  disabled={duplicating}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left text-gray-300 hover:bg-space-800 hover:text-white disabled:opacity-50 transition-colors"
+                >
+                  {duplicating ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Copy className="w-4 h-4" />
+                  )}
+                  Duplicate
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -288,6 +353,14 @@ export default function EntityDetailPage() {
           <p className="text-sm text-gray-400 whitespace-pre-wrap">{entity.notes}</p>
         </div>
       )}
+
+      {/* M4: tags editor */}
+      <div className="mt-2 mb-4">
+        <TagsEditor entity={entity} onEntityUpdate={setEntity} />
+      </div>
+
+      {/* M4: category + custom fields */}
+      <CategoryFieldsSection entity={entity} onEntityUpdate={setEntity} />
 
       {/* Photo gallery */}
       <section className="mt-4">

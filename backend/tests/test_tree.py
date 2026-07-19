@@ -44,11 +44,13 @@ def test_entity_out_shape(client, auth):
     e = _make(client, auth, "ShapeTest", "space")
     assert set(e.keys()) == {
         "id", "kind", "subtype", "name", "description", "notes", "parent_id",
-        "depth", "breadcrumb", "asset_tag", "draft", "archived", "protected",
-        "child_count", "cover_attachment_id", "thumb_url", "created_at", "updated_at",
+        "category_id", "depth", "breadcrumb", "asset_tag", "draft", "archived",
+        "protected", "child_count", "cover_attachment_id", "thumb_url", "tags",
+        "created_at", "updated_at",
     }
     assert e["kind"] == "space"
     assert e["parent_id"] is None
+    assert e["category_id"] is None
     assert e["depth"] == 0
     assert e["breadcrumb"] == "ShapeTest"
     assert e["archived"] is False
@@ -56,6 +58,7 @@ def test_entity_out_shape(client, auth):
     assert e["child_count"] == 0
     assert e["cover_attachment_id"] is None
     assert e["thumb_url"] is None
+    assert e["tags"] == []
 
 
 # --- containment matrix -------------------------------------------------------

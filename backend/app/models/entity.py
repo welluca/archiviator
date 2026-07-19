@@ -6,6 +6,7 @@ app.services.tree — path is a '/id/id/.../' chain including self (e.g. '/1/4/9
 """
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -19,10 +20,13 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
 from app.utils.dt import utcnow
+
+if TYPE_CHECKING:
+    from app.models.metadata import Tag
 
 KINDS = ("space", "furniture", "container", "item")
 
@@ -54,6 +58,15 @@ class Entity(Base):
             use_alter=True,
             name="fk_entity_cover_attachment",
         )
+    )
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("category.id", ondelete="SET NULL"), index=True
+    )
+    # Read-only convenience; API responses use the batched _tags_map fetch instead
+    # (lazy='noload' so no accidental N+1, viewonly so flush never touches entity_tag —
+    # associations are written via explicit statements that fire the FTS triggers).
+    tags: Mapped[list["Tag"]] = relationship(
+        secondary="entity_tag", lazy="noload", viewonly=True, order_by="Tag.name"
     )
 
     # Tree caches (see module docstring).
