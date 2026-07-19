@@ -46,6 +46,12 @@ def test_entity_out_shape(client, auth):
         "id", "kind", "subtype", "name", "description", "notes", "parent_id",
         "category_id", "depth", "breadcrumb", "asset_tag", "draft", "archived",
         "protected", "child_count", "cover_attachment_id", "thumb_url", "tags",
+        # Inventory fields (M6):
+        "quantity", "unit", "is_consumable", "low_stock_threshold",
+        "purchase_date", "purchase_price", "purchase_from", "currency",
+        "current_value", "insured", "warranty_expires", "warranty_lifetime",
+        "warranty_notes", "serial_number", "model_number", "manufacturer",
+        "sold_date", "sold_to", "sold_price", "sold_notes",
         "created_at", "updated_at",
     }
     assert e["kind"] == "space"
@@ -59,6 +65,14 @@ def test_entity_out_shape(client, auth):
     assert e["cover_attachment_id"] is None
     assert e["thumb_url"] is None
     assert e["tags"] == []
+    # Inventory defaults:
+    assert e["quantity"] == 1
+    assert e["is_consumable"] is False
+    assert e["insured"] is False
+    assert e["warranty_lifetime"] is False
+    assert e["low_stock_threshold"] is None
+    assert e["purchase_price"] is None
+    assert e["sold_date"] is None
 
 
 # --- containment matrix -------------------------------------------------------

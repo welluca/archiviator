@@ -30,11 +30,22 @@ def get_engine():
 
         @event.listens_for(_engine, "connect")
         def _set_sqlite_pragmas(dbapi_connection, connection_record):
+            # Disable pysqlite's implicit transaction handling: without this an
+            # outermost SAVEPOINT starts the SQLite transaction itself and its
+            # RELEASE *commits* it — Session.begin_nested() (CSV import per-row
+            # rollback) would silently commit row by row and dry_run could not
+            # roll back. SQLAlchemy emits BEGIN via the "begin" hook instead
+            # (the documented pysqlite workaround).
+            dbapi_connection.isolation_level = None
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.execute("PRAGMA busy_timeout=5000")
             cursor.close()
+
+        @event.listens_for(_engine, "begin")
+        def _explicit_begin(conn):
+            conn.exec_driver_sql("BEGIN")
 
         _SessionLocal = sessionmaker(bind=_engine, autocommit=False, autoflush=False)
     return _engine

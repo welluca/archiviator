@@ -10,8 +10,8 @@ entities hide their WHOLE subtree exactly like tree.list_tree.
 
 import re
 
-from sqlalchemy import column, exists, func, literal_column, select, table, text
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy import column, func, literal_column, select, table, text
+from sqlalchemy.orm import Session
 
 from app.models.attachment import Attachment
 from app.models.entity import Entity
@@ -91,17 +91,9 @@ def search_entities(
         )
         stmt = stmt.where(photo if has_photo else ~photo)
     if not include_archived:
-        # Hide the WHOLE archived subtree (same semantics as tree.list_tree):
-        # an entity is hidden when any prefix of its path is an archived row's
-        # path — including the entity itself.
-        ancestor = aliased(Entity)
-        hidden = exists(
-            select(ancestor.id).where(
-                ancestor.archived_at.is_not(None),
-                func.substr(Entity.path, 1, func.length(ancestor.path)) == ancestor.path,
-            )
-        )
-        stmt = stmt.where(~hidden)
+        # Hide the WHOLE archived subtree — the shared predicate from tree.py,
+        # same semantics as tree.list_tree and the inventory queries.
+        stmt = stmt.where(tree.not_in_archived_subtree())
 
     return list(db.scalars(stmt.limit(limit)))
 

@@ -46,8 +46,79 @@ export interface Entity {
   category_id: number | null;
   /** M4: tags carried by the entity (batched server-side, no N+1). */
   tags: TagLite[];
+  // ── M6: inventory & value ──────────────────────────────────────────────────
+  /** NOT NULL server-side (defaults to 1) — never null in responses. */
+  quantity: number;
+  unit: string | null;
+  is_consumable: boolean;
+  low_stock_threshold: number | null;
+  purchase_date: string | null;
+  purchase_price: number | null;
+  purchase_from: string | null;
+  /** 3-letter uppercase code, or null = instance default. */
+  currency: string | null;
+  current_value: number | null;
+  insured: boolean;
+  warranty_expires: string | null;
+  warranty_lifetime: boolean;
+  warranty_notes: string | null;
+  serial_number: string | null;
+  model_number: string | null;
+  manufacturer: string | null;
+  sold_date: string | null;
+  sold_to: string | null;
+  sold_price: number | null;
+  sold_notes: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// ── M6: inventory, valuation, admin ──────────────────────────────────────────
+
+export interface ValuationRootRow {
+  entity: { id: number; name: string };
+  total: number;
+  insured_total: number;
+}
+
+export interface ValuationCategoryRow {
+  /** null = uncategorized bucket. */
+  category: { id: number; name: string } | null;
+  total: number;
+  insured_total: number;
+}
+
+/** GET /inventory/valuation — current_value with purchase_price fallback,
+ * archived subtrees and sold items excluded. */
+export interface ValuationOut {
+  total: number;
+  insured_total: number;
+  /** Instance default currency code the totals are denominated in. */
+  currency: string;
+  /** Contributing entities whose own currency differs from the default
+   * (their values are summed numerically regardless). */
+  mixed_currency_count: number;
+  by_root: ValuationRootRow[];
+  by_category: ValuationCategoryRow[];
+}
+
+export interface BackupInfo {
+  file: string;
+  bytes: number;
+  created_at: string;
+}
+
+export interface ImportRowError {
+  row: number;
+  message: string;
+}
+
+/** POST /admin/import-csv result (dry-run or applied). */
+export interface ImportResult {
+  created: number;
+  updated: number;
+  errors: ImportRowError[];
+  dry_run: boolean;
 }
 
 // ── M4: Tags, categories, custom fields ──────────────────────────────────────

@@ -22,6 +22,7 @@ dependencies = [
     "pillow-heif",
     "qrcode[pil]",
     "reportlab",
+    "apscheduler",
 ]
 
 [project.optional-dependencies]

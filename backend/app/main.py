@@ -11,7 +11,18 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app import __version__
 from app.config import get_settings
 from app.database import run_migrations
-from app.routers import admin, attachments, auth, entities, labels, media, metadata, search
+from app.routers import (
+    admin,
+    attachments,
+    auth,
+    entities,
+    inventory,
+    labels,
+    media,
+    metadata,
+    search,
+)
+from app.services.scheduler import build_scheduler
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 
@@ -43,7 +54,17 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         settings.data_dir.mkdir(parents=True, exist_ok=True)
         run_migrations()
+        # Nightly backup scheduler — in-process, disabled via settings (tests).
+        # Exposed on app.state so tests can assert it never started.
+        scheduler = None
+        if settings.scheduler_enabled:
+            # Assumes ONE process: multiple uvicorn workers would each run the nightly job.
+            scheduler = build_scheduler(settings)
+            scheduler.start()
+        app.state.scheduler = scheduler
         yield
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
 
     app = FastAPI(
         title="Archiviator",
@@ -87,6 +108,7 @@ def create_app() -> FastAPI:
     app.include_router(metadata.router, prefix="/api/v1", tags=["metadata"])
     app.include_router(labels.router, prefix="/api/v1", tags=["labels"])
     app.include_router(search.router, prefix="/api/v1", tags=["search"])
+    app.include_router(inventory.router, prefix="/api/v1", tags=["inventory"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
     # /media must be registered BEFORE the SPA catch-all mount (unauthenticated
     # by design — see app/routers/media.py for the tradeoff).

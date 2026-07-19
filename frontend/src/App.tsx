@@ -9,6 +9,7 @@ import EntityDetailPage from './pages/EntityDetailPage';
 import SearchPage from './pages/SearchPage';
 import LabelsPage from './pages/LabelsPage';
 import ScanLandingPage from './pages/ScanLandingPage';
+import AdminPage from './pages/AdminPage';
 import ComingSoonPage from './pages/ComingSoonPage';
 
 export default function App() {
@@ -46,7 +47,7 @@ export default function App() {
         <Route path="/house-map" element={<ComingSoonPage title="House Map" />} />
         <Route path="/labels" element={<LabelsPage />} />
         <Route path="/drive" element={<ComingSoonPage title="Drive" />} />
-        <Route path="/admin" element={<ComingSoonPage title="Admin" />} />
+        <Route path="/admin" element={<AdminPage />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

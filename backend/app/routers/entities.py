@@ -1,7 +1,8 @@
 ﻿"""Entities router: thin REST surface over app.services.tree (M2 containment tree)."""
 
+import re
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -38,12 +39,39 @@ class EntityCreate(BaseModel):
         return v
 
 
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
+
+
 class EntityUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1)
     subtype: str | None = None
     description: str | None = None
     notes: str | None = None
     category_id: int | None = None
+    # Inventory fields (M6). Explicit null clears the nullable ones; the NOT
+    # NULL columns (quantity, is_consumable, insured, warranty_lifetime) reject
+    # explicit null with 422 instead.
+    quantity: float | None = Field(default=None, ge=0)
+    unit: str | None = None
+    is_consumable: bool | None = None
+    low_stock_threshold: float | None = Field(default=None, ge=0)
+    purchase_date: str | None = None
+    purchase_price: float | None = Field(default=None, ge=0)
+    purchase_from: str | None = None
+    currency: str | None = None
+    current_value: float | None = Field(default=None, ge=0)
+    insured: bool | None = None
+    warranty_expires: str | None = None
+    warranty_lifetime: bool | None = None
+    warranty_notes: str | None = None
+    serial_number: str | None = None
+    model_number: str | None = None
+    manufacturer: str | None = None
+    sold_date: str | None = None
+    sold_to: str | None = None
+    sold_price: float | None = Field(default=None, ge=0)
+    sold_notes: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -53,6 +81,37 @@ class EntityUpdate(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("name must not be blank")
+        return v
+
+    @field_validator("quantity", "is_consumable", "insured", "warranty_lifetime")
+    @classmethod
+    def _not_null(cls, v):
+        # Optional in the payload, but an explicit null would hit NOT NULL columns.
+        if v is None:
+            raise ValueError("field must not be null")
+        return v
+
+    @field_validator("purchase_date", "warranty_expires", "sold_date")
+    @classmethod
+    def _iso_date(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if not _DATE_RE.match(v):
+            raise ValueError("must be an ISO date (YYYY-MM-DD)")
+        try:
+            date.fromisoformat(v)
+        except ValueError:
+            raise ValueError(f"{v!r} is not a valid date")
+        return v
+
+    @field_validator("currency")
+    @classmethod
+    def _currency_code(cls, v: str | None) -> str | None:
+        # Strict: 3-letter UPPERCASE or null (null = default currency).
+        if v is None:
+            return v
+        if not _CURRENCY_RE.match(v):
+            raise ValueError("must be a 3-letter uppercase currency code (e.g. EUR)")
         return v
 
 
@@ -85,6 +144,27 @@ class EntityOut(BaseModel):
     cover_attachment_id: int | None
     thumb_url: str | None
     tags: list[TagBrief]
+    # Inventory fields (M6) — keep in sync with tree.INVENTORY_FIELDS.
+    quantity: float
+    unit: str | None
+    is_consumable: bool
+    low_stock_threshold: float | None
+    purchase_date: str | None
+    purchase_price: float | None
+    purchase_from: str | None
+    currency: str | None
+    current_value: float | None
+    insured: bool
+    warranty_expires: str | None
+    warranty_lifetime: bool
+    warranty_notes: str | None
+    serial_number: str | None
+    model_number: str | None
+    manufacturer: str | None
+    sold_date: str | None
+    sold_to: str | None
+    sold_price: float | None
+    sold_notes: str | None
     created_at: datetime
     updated_at: datetime
 
@@ -165,6 +245,7 @@ def _out(
         tags=(tags or {}).get(entity.id, []),
         created_at=entity.created_at,
         updated_at=entity.updated_at,
+        **{field: getattr(entity, field) for field in tree.INVENTORY_FIELDS},
     )
 
 

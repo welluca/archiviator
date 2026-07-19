@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     refresh_token_days: int = 90
     cors_origins: list[str] = ["http://localhost:5175"]
     jwt_algorithm: str = "HS256"
+    # In-process APScheduler (nightly backups); ARCHIVIATOR_SCHEDULER_ENABLED=false
+    # disables it (tests must never spawn jobs).
+    scheduler_enabled: bool = True
 
     _jwt_secret: str | None = PrivateAttr(default=None)
 

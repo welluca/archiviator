@@ -18,6 +18,28 @@ export interface UpdateEntityPayload {
   notes?: string;
   /** M4: assign / clear the category (null clears). */
   category_id?: number | null;
+  // ── M6: inventory & value (all optional, null clears the nullable ones) ────
+  /** NOT NULL server-side — explicit null is a 422, so omit to keep current. */
+  quantity?: number;
+  unit?: string | null;
+  is_consumable?: boolean;
+  low_stock_threshold?: number | null;
+  purchase_date?: string | null;
+  purchase_price?: number | null;
+  purchase_from?: string | null;
+  currency?: string | null;
+  current_value?: number | null;
+  insured?: boolean;
+  warranty_expires?: string | null;
+  warranty_lifetime?: boolean;
+  warranty_notes?: string | null;
+  serial_number?: string | null;
+  model_number?: string | null;
+  manufacturer?: string | null;
+  sold_date?: string | null;
+  sold_to?: string | null;
+  sold_price?: number | null;
+  sold_notes?: string | null;
 }
 
 export const entitiesApi = {

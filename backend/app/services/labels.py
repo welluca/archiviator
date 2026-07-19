@@ -266,7 +266,12 @@ def _release_label_for(db: Session, tag: str | None) -> None:
 
 
 def assign_asset_tag(
-    db: Session, entity_id: int, *, tag: str | None = None, auto: bool = False
+    db: Session,
+    entity_id: int,
+    *,
+    tag: str | None = None,
+    auto: bool = False,
+    commit: bool = True,
 ) -> Entity:
     """All contract branches of POST /entities/{id}/asset-tag:
 
@@ -278,14 +283,16 @@ def assign_asset_tag(
     tag=None      clear — a printed label claimed with the old tag reverts to
                   unclaimed.
     Replacing an existing tag releases its claimed sticker in the same
-    transaction (one commit)."""
+    transaction (one commit). commit=False joins the caller's transaction
+    (CSV import) — UNIQUE collisions then surface at the caller's flush/commit."""
     entity = tree.get_entity(db, entity_id)
 
     if not auto and tag is None:  # clear
         if entity.asset_tag is not None:
             _release_label_for(db, entity.asset_tag)
             entity.asset_tag = None
-            db.commit()
+            if commit:
+                db.commit()
         return entity
 
     if tree.is_protected(db, entity):
@@ -295,7 +302,8 @@ def assign_asset_tag(
         new_tag = allocate_free_tags(db, 1)[0]
         _release_label_for(db, entity.asset_tag)
         entity.asset_tag = new_tag
-        _commit_or_conflict(db)
+        if commit:
+            _commit_or_conflict(db)
         return entity
 
     new_tag = normalize_tag(tag)
@@ -319,7 +327,8 @@ def assign_asset_tag(
         _bind(db, label, entity)
     else:  # free-form assign
         entity.asset_tag = new_tag
-    _commit_or_conflict(db)
+    if commit:
+        _commit_or_conflict(db)
     return entity
 
 

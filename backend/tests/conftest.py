@@ -6,6 +6,8 @@ import tempfile
 # Must happen before any 'app.*' import anywhere in the test session.
 _TEST_DATA_DIR = tempfile.mkdtemp(prefix="archiviator-test-data-")
 os.environ["ARCHIVIATOR_DATA_DIR"] = _TEST_DATA_DIR
+# Tests must never spawn the in-process backup scheduler.
+os.environ["ARCHIVIATOR_SCHEDULER_ENABLED"] = "false"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

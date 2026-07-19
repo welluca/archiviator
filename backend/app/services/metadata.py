@@ -142,9 +142,12 @@ def delete_tag(db: Session, tag_id: int) -> None:
     db.commit()
 
 
-def set_entity_tags(db: Session, entity_id: int, names: list[str]) -> Entity:
+def set_entity_tags(
+    db: Session, entity_id: int, names: list[str], commit: bool = True
+) -> Entity:
     """Replace the entity's full tag set; unknown names are created on the fly
-    (create-on-type), duplicates within the payload dedup case-insensitively."""
+    (create-on-type), duplicates within the payload dedup case-insensitively.
+    commit=False joins the caller's transaction (CSV import)."""
     entity = _get_entity(db, entity_id)
     cleaned: list[str] = []
     seen: set[str] = set()
@@ -173,7 +176,8 @@ def set_entity_tags(db: Session, entity_id: int, names: list[str]) -> Entity:
     )
     for tag_id in tag_ids:
         db.add(EntityTag(entity_id=entity_id, tag_id=tag_id))
-    db.commit()
+    if commit:
+        db.commit()
     return entity
 
 
@@ -475,13 +479,7 @@ def autocomplete_values(
 
 # --- duplication --------------------------------------------------------------
 
-_COPY_COLUMNS = (
-    "quantity", "unit", "is_consumable", "low_stock_threshold",
-    "purchase_date", "purchase_price", "purchase_from", "currency",
-    "current_value", "insured", "warranty_expires", "warranty_lifetime",
-    "warranty_notes", "serial_number", "model_number", "manufacturer",
-    "sold_date", "sold_to", "sold_price", "sold_notes",
-)
+_COPY_COLUMNS = tree.INVENTORY_FIELDS
 
 
 def duplicate_entity(db: Session, entity_id: int) -> Entity:

@@ -7,8 +7,8 @@ the leading prefix of each cached value is replaced — a naive REPLACE() would
 corrupt entities whose names repeat in deeper breadcrumb segments.
 """
 
-from sqlalchemy import and_, case, func, literal, select, update
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, case, exists, func, literal, select, update
+from sqlalchemy.orm import Session, aliased
 
 from app.models.entity import Entity
 from app.models.meta import Meta
@@ -35,6 +35,33 @@ ALLOWED_CHILDREN: dict[str, set[str]] = {
     "container": {"container", "item"},
     "item": set(),
 }
+
+# Inventory columns (M6) patched straight through by update_entity — validation
+# lives in the router schema. Also the copy set for metadata.duplicate_entity.
+INVENTORY_FIELDS: tuple[str, ...] = (
+    "quantity", "unit", "is_consumable", "low_stock_threshold",
+    "purchase_date", "purchase_price", "purchase_from", "currency",
+    "current_value", "insured", "warranty_expires", "warranty_lifetime",
+    "warranty_notes", "serial_number", "model_number", "manufacturer",
+    "sold_date", "sold_to", "sold_price", "sold_notes",
+)
+
+
+def not_in_archived_subtree():
+    """SQL predicate: entity is NOT inside an archived subtree (itself included).
+
+    An entity is hidden when any prefix of its path is an archived row's path.
+    THE single definition of archived visibility — tree listing, search and the
+    inventory queries all reuse it so the semantics can never drift.
+    """
+    ancestor = aliased(Entity)
+    hidden = exists(
+        select(ancestor.id).where(
+            ancestor.archived_at.is_not(None),
+            func.substr(Entity.path, 1, func.length(ancestor.path)) == ancestor.path,
+        )
+    )
+    return ~hidden
 
 
 def subtree_range_filter(path: str):
@@ -108,17 +135,10 @@ def list_tree(db: Session, include_archived: bool = False) -> list[Entity]:
     Archiving hides the WHOLE subtree: a live entity inside an archived box
     would otherwise be returned parentless and silently dropped by the client.
     """
-    rows = list(db.scalars(select(Entity).order_by(Entity.path)))
-    if include_archived:
-        return rows
-    archived_ids = {e.id for e in rows if e.archived_at is not None}
-    if not archived_ids:
-        return rows
-    return [
-        e
-        for e in rows
-        if archived_ids.isdisjoint(int(part) for part in e.path[1:-1].split("/"))
-    ]
+    stmt = select(Entity).order_by(Entity.path)
+    if not include_archived:
+        stmt = stmt.where(not_in_archived_subtree())
+    return list(db.scalars(stmt))
 
 
 _KIND_ORDER = case(
@@ -167,6 +187,10 @@ def child_counts(db: Session, parent_ids: list[int] | None = None) -> dict[int, 
 
 
 # --- mutators (each commits exactly once) -------------------------------------
+#
+# commit=False is used ONLY by app.services.io_csv (CSV import): rows run under
+# per-row SAVEPOINTs and the whole import commits once at the end (or rolls back
+# entirely for dry_run). Default behavior is identical to before.
 
 
 def create_entity(
@@ -178,6 +202,7 @@ def create_entity(
     subtype: str | None = None,
     description: str | None = None,
     notes: str | None = None,
+    commit: bool = True,
 ) -> Entity:
     if kind not in ALLOWED_CHILDREN:
         raise RuleViolation(f"Unknown kind {kind!r}")
@@ -196,14 +221,15 @@ def create_entity(
     db.add(entity)
     db.flush()  # assigns entity.id, needed for the path cache
     entity.path, entity.depth, entity.breadcrumb = _caches_for(parent, entity.id, name)
-    db.commit()
+    if commit:
+        db.commit()
     return entity
 
 
-def update_entity(db: Session, entity_id: int, changes: dict) -> Entity:
+def update_entity(db: Session, entity_id: int, changes: dict, commit: bool = True) -> Entity:
     """Apply a partial update; a name change rewrites the whole subtree's breadcrumbs."""
     entity = _get(db, entity_id)
-    for field in ("subtype", "description", "notes"):
+    for field in ("subtype", "description", "notes", *INVENTORY_FIELDS):
         if field in changes:
             setattr(entity, field, changes[field])
     if "category_id" in changes:
@@ -232,11 +258,14 @@ def update_entity(db: Session, entity_id: int, changes: dict) -> Entity:
             .execution_options(synchronize_session=False)
         )
         db.expire_all()
-    db.commit()
+    if commit:
+        db.commit()
     return entity
 
 
-def move_entity(db: Session, entity_id: int, new_parent_id: int | None) -> Entity:
+def move_entity(
+    db: Session, entity_id: int, new_parent_id: int | None, commit: bool = True
+) -> Entity:
     entity = _get(db, entity_id)
     _guard_protected(db, entity, "moved")
 
@@ -267,7 +296,8 @@ def move_entity(db: Session, entity_id: int, new_parent_id: int | None) -> Entit
         .execution_options(synchronize_session=False)
     )
     db.expire_all()
-    db.commit()
+    if commit:
+        db.commit()
     return entity
 
 

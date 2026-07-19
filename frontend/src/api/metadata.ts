@@ -182,16 +182,6 @@ export const presetsApi = {
   },
 };
 
-// ── Admin ────────────────────────────────────────────────────────────────────
-
-export const adminApi = {
-  /** Drop and refill the FTS index from live rows (safety net). */
-  async rebuildSearch(): Promise<{ indexed: number }> {
-    const { data } = await apiClient.post<{ indexed: number }>('/admin/rebuild-search');
-    return data;
-  },
-};
-
 // ── Duplicate ────────────────────────────────────────────────────────────────
 
 /** Deep-copy an entity: name + " (copy)", inventory columns, tags and field

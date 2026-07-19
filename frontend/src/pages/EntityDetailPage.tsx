@@ -25,6 +25,7 @@ import PhotoCard from '../components/entity/PhotoCard';
 import Lightbox from '../components/entity/Lightbox';
 import TagsEditor from '../components/entity/TagsEditor';
 import CategoryFieldsSection from '../components/entity/CategoryFieldsSection';
+import InventorySection from '../components/entity/InventorySection';
 import { formatBytes } from '../utils/format';
 import type { Attachment, Entity, PathSegment } from '../types';
 import { KIND_META } from '../types';
@@ -365,6 +366,9 @@ export default function EntityDetailPage() {
 
       {/* M4: category + custom fields */}
       <CategoryFieldsSection entity={entity} onEntityUpdate={setEntity} />
+
+      {/* M6: inventory & value */}
+      <InventorySection entity={entity} onEntityUpdate={setEntity} />
 
       {/* Photo gallery */}
       <section className="mt-4">
