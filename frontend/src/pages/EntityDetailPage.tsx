@@ -26,6 +26,7 @@ import Lightbox from '../components/entity/Lightbox';
 import TagsEditor from '../components/entity/TagsEditor';
 import CategoryFieldsSection from '../components/entity/CategoryFieldsSection';
 import InventorySection from '../components/entity/InventorySection';
+import LayoutSection from '../components/map/LayoutSection';
 import { formatBytes } from '../utils/format';
 import type { Attachment, Entity, PathSegment } from '../types';
 import { KIND_META } from '../types';
@@ -369,6 +370,9 @@ export default function EntityDetailPage() {
 
       {/* M6: inventory & value */}
       <InventorySection entity={entity} onEntityUpdate={setEntity} />
+
+      {/* M8: furniture/container layout (mini grid preview -> /map editor) */}
+      <LayoutSection entity={entity} />
 
       {/* Photo gallery */}
       <section className="mt-4">

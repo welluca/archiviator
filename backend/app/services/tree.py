@@ -296,6 +296,56 @@ def move_entity(
         .execution_options(synchronize_session=False)
     )
     db.expire_all()
+
+    # ── Map-view consistency (M8), same transaction. Imports inside the
+    # function, like the media/labels hooks in delete_entity, to avoid
+    # service-layer cycles. ──────────────────────────────────────────────────
+    from app.models.map import FloorPlan, FurnitureGrid, GridCell, MapRegion
+
+    # (a) The MOVED entity's own cell binding: a grid cell renders a direct
+    # child of its grid's entity, so once the entity leaves that parent the
+    # binding is stale — unbind the cell (the drawer stays; the box moved
+    # elsewhere). Any inner layout anchored on that cell BELONGS to the moved
+    # container, so detach it (parent_cell_id -> NULL): it survives as a
+    # top-level grid, still viewable from the container's own Layout section.
+    # Bindings of the moved entity's DESCENDANTS are relative and stay valid.
+    cell = db.scalar(select(GridCell).where(GridCell.entity_id == entity.id))
+    if cell is not None:
+        cell_grid = db.get(FurnitureGrid, cell.grid_id)
+        if cell_grid.entity_id != new_parent_id:
+            db.execute(
+                update(FurnitureGrid)
+                .where(FurnitureGrid.parent_cell_id == cell.id)
+                .values(parent_cell_id=None)
+                .execution_options(synchronize_session=False)
+            )
+            cell.entity_id = None
+
+    # (b) Regions of the moved subtree: a trace is only meaningful while its
+    # room is still a strict descendant of its floor plan's space — delete the
+    # ones this move invalidated (the room physically left that floor). Moves
+    # WITHIN the floor's subtree keep their regions, and floor plans themselves
+    # are unaffected by moves.
+    region_rows = db.execute(
+        select(MapRegion, Entity.path)
+        .join(Entity, Entity.id == MapRegion.entity_id)
+        .where(subtree_range_filter(new_path))
+    ).all()
+    if region_rows:
+        floor_paths = {
+            floor_id: path
+            for floor_id, path in db.execute(
+                select(FloorPlan.id, Entity.path)
+                .join(Entity, Entity.id == FloorPlan.entity_id)
+                .where(FloorPlan.id.in_({r.floor_plan_id for r, _ in region_rows}))
+            )
+        }
+        for region, room_path in region_rows:
+            floor_path = floor_paths[region.floor_plan_id]
+            # Strict-descendant check, mirroring mapsvc.upsert_region.
+            if room_path == floor_path or not room_path.startswith(floor_path):
+                db.delete(region)
+
     if commit:
         db.commit()
     return entity
@@ -328,8 +378,11 @@ def delete_entity(db: Session, entity_id: int) -> None:
         raise RuleViolation("Cannot delete an entity that has children (archive it instead)")
     # The FK cascade removes attachment rows silently — collect their hashes first
     # so the refcounted file cleanup still runs for whatever becomes unreferenced.
-    # Imports inside the function (like the media hook) to avoid service cycles.
+    # Same for the entity's floor plan (M8): the row cascades, the image file is
+    # refcounted across floor_plan rows. Imports inside the function (like the
+    # media hook) to avoid service cycles.
     from app.models.attachment import Attachment
+    from app.models.map import FloorPlan
     from app.services import labels as labels_svc
     from app.services import media
 
@@ -340,6 +393,9 @@ def delete_entity(db: Session, entity_id: int) -> None:
             )
         )
     )
+    floor_images = set(
+        db.scalars(select(FloorPlan.image_path).where(FloorPlan.entity_id == entity_id))
+    )
     # A claimed printed label reverts to 'unclaimed' in the same transaction —
     # the sticker is still physically out there and can be re-bound.
     labels_svc.release_on_entity_delete(db, entity)
@@ -347,3 +403,5 @@ def delete_entity(db: Session, entity_id: int) -> None:
     db.commit()
     for content_hash in hashes:
         media.delete_files_if_unreferenced(db, content_hash)
+    for image_path in floor_images:
+        media.delete_floorplan_if_unreferenced(db, image_path)

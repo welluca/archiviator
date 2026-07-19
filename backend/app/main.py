@@ -19,6 +19,7 @@ from app.routers import (
     intake,
     inventory,
     labels,
+    map as house_map,  # 'map' shadows the builtin; alias keeps this module clean
     media,
     metadata,
     search,
@@ -114,6 +115,7 @@ def create_app() -> FastAPI:
     app.include_router(inventory.router, prefix="/api/v1", tags=["inventory"])
     app.include_router(intake.router, prefix="/api/v1", tags=["intake"])
     app.include_router(intake.capture_router, prefix="/api/v1", tags=["intake"])
+    app.include_router(house_map.router, prefix="/api/v1", tags=["map"])
     app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
     # /media must be registered BEFORE the SPA catch-all mount (unauthenticated
     # by design — see app/routers/media.py for the tradeoff).

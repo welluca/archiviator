@@ -1,11 +1,13 @@
-"""Unauthenticated media serving for stored attachments and derivatives.
+"""Unauthenticated media serving for stored attachments, derivatives and
+floor-plan images.
 
 Deliberate tradeoff: /media is NOT Bearer-authed. URLs are content-addressed
 (sha256 of the processed bytes), so a URL is itself an unguessable capability
 token, and the app runs single-user on a private tailnet — <img> tags and PDF
-viewers then work without auth plumbing. Only files under data_dir/attachments
-and data_dir/derived are ever served (path-traversal guarded); everything else
-in data_dir (DB, secret.key) is unreachable.
+viewers then work without auth plumbing. Only files under data_dir/attachments,
+data_dir/derived and data_dir/floorplans (M8 floor plans share the same
+content-addressed tradeoff) are ever served (path-traversal guarded);
+everything else in data_dir (DB, secret.key) is unreachable.
 """
 
 from fastapi import APIRouter, HTTPException, status
@@ -26,8 +28,8 @@ async def serve_media(path: str):
     except (OSError, ValueError):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     # Traversal guard: after resolution the target must sit inside one of the
-    # two servable subtrees — '..' segments or absolute paths land outside.
-    allowed = (root / "attachments", root / "derived")
+    # servable subtrees — '..' segments or absolute paths land outside.
+    allowed = (root / "attachments", root / "derived", root / "floorplans")
     if not any(target.is_relative_to(base) for base in allowed) or not target.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     return FileResponse(target, headers={"Cache-Control": CACHE_CONTROL})

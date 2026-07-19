@@ -321,3 +321,84 @@ export const KIND_ORDER: Record<EntityKind, number> = {
  * `entity.protected`, which the server keys to the seeded row's identity. */
 export const isInboxRoot = (e: Entity): boolean =>
   e.protected || (e.kind === 'space' && e.subtype === 'inbox' && e.parent_id === null);
+
+// ── M8: House map — floor plans, regions, furniture grids ────────────────────
+
+export type CellType = 'drawer' | 'shelf' | 'door' | 'box' | 'void' | 'other';
+
+export const CELL_TYPES: CellType[] = ['drawer', 'shelf', 'door', 'box', 'void', 'other'];
+
+export const CELL_TYPE_LABEL: Record<CellType, string> = {
+  drawer: 'Drawer',
+  shelf: 'Shelf',
+  door: 'Door',
+  box: 'Box',
+  void: 'Void',
+  other: 'Other',
+};
+
+/** Entity ref embedded on floor plans. */
+export interface FloorEntityRef {
+  id: number;
+  name: string;
+  breadcrumb: string;
+}
+
+/** Entity ref embedded on regions and bound grid cells (with live counts).
+ * item_count = non-archived 'item' descendants of the subtree. */
+export interface MapEntityRef {
+  id: number;
+  name: string;
+  child_count: number;
+  item_count: number;
+}
+
+/** [x, y] in IMAGE-PIXEL coordinates (scale-free via the SVG viewBox). */
+export type PolygonPoint = [number, number];
+
+export interface FloorPlan {
+  id: number;
+  entity: FloorEntityRef;
+  image_url: string;
+  image_w: number | null;
+  image_h: number | null;
+  sort_order: number;
+  region_count: number;
+}
+
+export interface MapRegion {
+  id: number;
+  entity: MapEntityRef;
+  polygon: PolygonPoint[];
+  label_x: number | null;
+  label_y: number | null;
+}
+
+/** GET /map/floors/{id} — floor plus its traced regions. */
+export interface FloorPlanDetail extends Omit<FloorPlan, 'region_count'> {
+  regions: MapRegion[];
+}
+
+export interface GridCell {
+  id: number;
+  /** 0-based grid coordinates. */
+  row: number;
+  col: number;
+  row_span: number;
+  col_span: number;
+  cell_type: CellType;
+  label: string | null;
+  /** 1:1 binding to a direct-child container of the grid's entity, or null. */
+  entity: MapEntityRef | null;
+}
+
+export interface FurnitureGrid {
+  id: number;
+  name: string | null;
+  rows: number;
+  cols: number;
+  /** Set when this is a stacked sub-grid anchored to a bound cell. */
+  parent_cell_id: number | null;
+  sort_order: number;
+  cells: GridCell[];
+}

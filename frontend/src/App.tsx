@@ -8,6 +8,7 @@ import BrowsePage from './pages/BrowsePage';
 import IntakePage from './pages/IntakePage';
 import EntityDetailPage from './pages/EntityDetailPage';
 import SearchPage from './pages/SearchPage';
+import MapPage from './pages/MapPage';
 import LabelsPage from './pages/LabelsPage';
 import ScanLandingPage from './pages/ScanLandingPage';
 import AdminPage from './pages/AdminPage';
@@ -46,7 +47,9 @@ export default function App() {
         <Route path="/intake" element={<IntakePage />} />
         <Route path="/entity/:id" element={<EntityDetailPage />} />
         <Route path="/search" element={<SearchPage />} />
-        <Route path="/house-map" element={<ComingSoonPage title="House Map" />} />
+        <Route path="/map" element={<MapPage />} />
+        {/* Pre-M8 bookmarks */}
+        <Route path="/house-map" element={<Navigate to="/map" replace />} />
         <Route path="/labels" element={<LabelsPage />} />
         <Route path="/drive" element={<ComingSoonPage title="Drive" />} />
         <Route path="/admin" element={<AdminPage />} />

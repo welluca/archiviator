@@ -3,6 +3,7 @@
 Layout (all paths stored relative, POSIX-style):
     attachments/{hash[:2]}/{sha256}.jpg|.png|.pdf   processed original
     derived/{sha256}_1600.jpg, {sha256}_320.jpg     photo derivatives (regenerable)
+    floorplans/{hash[:2]}/{sha256}.jpg|.png         processed floor-plan images (M8)
 
 The sha256 is computed over the PROCESSED bytes, so identical uploads (and
 re-uploads of the same source) land on the same files. Writes are if-absent;
@@ -13,6 +14,10 @@ Photo pipeline: EXIF-transpose, flatten alpha onto white, cap the long edge at
 3000px (LANCZOS), save JPEG q87 with EXIF stripped. A PNG stays PNG only if it
 had no alpha and needed no resize. Derivatives are always JPEG q82 and are only
 ever downscaled. PDFs are stored verbatim with no derivatives.
+
+Floor plans run the same pipeline with a 4000px cap and no derivatives (they
+are traced over at full size); refcounting is across floor_plan rows instead of
+attachment rows.
 """
 
 import hashlib
@@ -33,6 +38,7 @@ pillow_heif.register_heif_opener()
 
 MAX_UPLOAD = 30 * 1024 * 1024
 ORIGINAL_CAP = 3000
+FLOORPLAN_CAP = 4000
 DISPLAY_SIZE = 1600
 THUMB_SIZE = 320
 JPEG_QUALITY = 87
@@ -71,6 +77,16 @@ class ProcessedDocument:
     byte_size: int
 
 
+@dataclass(frozen=True)
+class ProcessedFloorplan:
+    file_path: str
+    content_hash: str
+    mime: str
+    byte_size: int
+    width: int
+    height: int
+
+
 def media_root() -> Path:
     return get_settings().data_dir
 
@@ -83,8 +99,16 @@ def derived_dir() -> Path:
     return media_root() / "derived"
 
 
+def floorplans_dir() -> Path:
+    return media_root() / "floorplans"
+
+
 def _original_rel(content_hash: str, ext: str) -> str:
     return f"attachments/{content_hash[:2]}/{content_hash}{ext}"
+
+
+def _floorplan_rel(content_hash: str, ext: str) -> str:
+    return f"floorplans/{content_hash[:2]}/{content_hash}{ext}"
 
 
 def _derived_rel(content_hash: str, size: int) -> str:
@@ -125,8 +149,8 @@ def _encode_derivative(rgb: Image.Image, size: int) -> bytes:
     return buf.getvalue()
 
 
-def process_photo(data: bytes) -> ProcessedPhoto:
-    """Run the photo pipeline and persist original + derivatives (write-if-absent)."""
+def _decode_image(data: bytes) -> tuple[Image.Image, str | None]:
+    """Decode + EXIF-transpose an upload; returns (image, source format)."""
     try:
         img = Image.open(io.BytesIO(data))
         source_format = img.format
@@ -138,14 +162,14 @@ def process_photo(data: bytes) -> ProcessedPhoto:
         ValueError,
     ) as exc:
         raise UnsupportedMediaError("Unsupported file type (not an image or PDF)") from exc
+    return ImageOps.exif_transpose(img), source_format
 
-    img = ImageOps.exif_transpose(img)
 
-    keep_png = (
-        source_format == "PNG"
-        and not _has_alpha(img)
-        and max(img.size) <= ORIGINAL_CAP
-    )
+def _encode_original(
+    img: Image.Image, source_format: str | None, cap: int
+) -> tuple[bytes, str, str, Image.Image]:
+    """Flatten/resize/encode per the pipeline rules; returns (bytes, ext, mime, image)."""
+    keep_png = source_format == "PNG" and not _has_alpha(img) and max(img.size) <= cap
     if keep_png:
         # No alpha and no resize needed: re-encode as PNG (drops EXIF/ancillary data).
         buf = io.BytesIO()
@@ -153,8 +177,8 @@ def process_photo(data: bytes) -> ProcessedPhoto:
         ext, mime = ".png", "image/png"
     else:
         img = _flatten_rgb(img)
-        if max(img.size) > ORIGINAL_CAP:
-            scale = ORIGINAL_CAP / max(img.size)
+        if max(img.size) > cap:
+            scale = cap / max(img.size)
             img = img.resize(
                 (max(1, round(img.width * scale)), max(1, round(img.height * scale))),
                 Image.Resampling.LANCZOS,
@@ -162,8 +186,13 @@ def process_photo(data: bytes) -> ProcessedPhoto:
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=JPEG_QUALITY)  # no exif kwarg -> EXIF stripped
         ext, mime = ".jpg", "image/jpeg"
+    return buf.getvalue(), ext, mime, img
 
-    original = buf.getvalue()
+
+def process_photo(data: bytes) -> ProcessedPhoto:
+    """Run the photo pipeline and persist original + derivatives (write-if-absent)."""
+    img, source_format = _decode_image(data)
+    original, ext, mime, img = _encode_original(img, source_format, ORIGINAL_CAP)
     content_hash = hashlib.sha256(original).hexdigest()
     file_path = _original_rel(content_hash, ext)
     _write_if_absent(file_path, original)
@@ -193,6 +222,24 @@ def process_document(data: bytes, mime: str = "application/pdf") -> ProcessedDoc
     _write_if_absent(file_path, data)
     return ProcessedDocument(
         file_path=file_path, content_hash=content_hash, mime=mime, byte_size=len(data)
+    )
+
+
+def process_floorplan(data: bytes) -> ProcessedFloorplan:
+    """Photo pipeline variant for floor-plan images: same decode/flatten/encode
+    rules with a 4000px cap, stored under floorplans/, no derivatives."""
+    img, source_format = _decode_image(data)
+    original, ext, mime, img = _encode_original(img, source_format, FLOORPLAN_CAP)
+    content_hash = hashlib.sha256(original).hexdigest()
+    file_path = _floorplan_rel(content_hash, ext)
+    _write_if_absent(file_path, original)
+    return ProcessedFloorplan(
+        file_path=file_path,
+        content_hash=content_hash,
+        mime=mime,
+        byte_size=len(original),
+        width=img.width,
+        height=img.height,
     )
 
 
@@ -243,3 +290,24 @@ def delete_files_if_unreferenced(
             (media_root() / _derived_rel(content_hash, size)).unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def delete_floorplan_if_unreferenced(
+    db: Session, image_path: str | None, exclude_floor_plan_id: int | None = None
+) -> None:
+    """Unlink a floor-plan image iff no floor_plan row still references its path
+    (content-addressed: two floors uploading the same image share one file)."""
+    if image_path is None:
+        return
+    from app.models.map import FloorPlan  # local import: map models are M8-optional here
+
+    stmt = select(func.count(FloorPlan.id)).where(FloorPlan.image_path == image_path)
+    if exclude_floor_plan_id is not None:
+        stmt = stmt.where(FloorPlan.id != exclude_floor_plan_id)
+    if db.scalar(stmt):
+        return
+    # Best-effort, same rationale as delete_files_if_unreferenced above.
+    try:
+        (media_root() / image_path).unlink(missing_ok=True)
+    except OSError:
+        pass

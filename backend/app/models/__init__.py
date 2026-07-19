@@ -9,6 +9,12 @@ from app.models.labels import (  # noqa: F401
     PrintedLabel,
     TagSequence,
 )
+from app.models.map import (  # noqa: F401
+    FloorPlan,
+    FurnitureGrid,
+    GridCell,
+    MapRegion,
+)
 from app.models.meta import Meta  # noqa: F401
 from app.models.metadata import (  # noqa: F401
     Category,

@@ -21,7 +21,7 @@ const navItems = [
   { to: '/browse', icon: FolderOpen, label: 'Browse' },
   { to: '/intake', icon: Camera, label: 'Intake' },
   { to: '/search', icon: Search, label: 'Search' },
-  { to: '/house-map', icon: Map, label: 'House Map' },
+  { to: '/map', icon: Map, label: 'House Map' },
   { to: '/labels', icon: QrCode, label: 'Labels' },
   { to: '/drive', icon: HardDrive, label: 'Drive' },
   { to: '/admin', icon: Shield, label: 'Admin' },

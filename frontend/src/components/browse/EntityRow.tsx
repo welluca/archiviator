@@ -30,9 +30,11 @@ interface EntityRowProps {
   actions?: EntityRowActions;
   /** Show the entity breadcrumb as a second line (search results). */
   showBreadcrumb?: boolean;
+  /** Extra badge rendered after the name (e.g. the map's has-layout marker). */
+  badge?: React.ReactNode;
 }
 
-export function EntityRow({ entity, onOpen, actions, showBreadcrumb = false }: EntityRowProps) {
+export function EntityRow({ entity, onOpen, actions, showBreadcrumb = false, badge }: EntityRowProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -98,6 +100,7 @@ export function EntityRow({ entity, onOpen, actions, showBreadcrumb = false }: E
               {entity.subtype}
             </span>
           )}
+          {badge}
           {entity.draft && (
             <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-900/40 border border-violet-700/40 text-violet-400 shrink-0">
               draft
