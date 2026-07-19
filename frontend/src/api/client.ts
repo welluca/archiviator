@@ -33,6 +33,13 @@ apiClient.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    // FormData uploads must NOT carry the instance default 'application/json':
+    // with a content-type already set, axios won't add the multipart boundary,
+    // so the server can't parse the file part (422). Drop it and let the browser
+    // set 'multipart/form-data; boundary=…' itself.
+    if (config.data instanceof FormData) {
+      config.headers.delete('Content-Type');
+    }
     return config;
   },
   (error) => Promise.reject(error)
