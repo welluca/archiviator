@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ImagePlus, Loader2 } from 'lucide-react';
+import { ImagePlus, LayoutGrid, Loader2 } from 'lucide-react';
 import Modal from '../browse/Modal';
 import EntityIcon from '../browse/EntityIcon';
 import { mapApi } from '../../api/map';
@@ -30,6 +30,7 @@ export function AddFloorModal({
 }: AddFloorModalProps) {
   const toast = useToast();
   const [entityId, setEntityId] = useState<number | null>(null);
+  const [mode, setMode] = useState<'blank' | 'image'>('blank');
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -39,6 +40,7 @@ export function AddFloorModal({
   useEffect(() => {
     if (open) {
       setEntityId(null);
+      setMode('blank');
       setFile(null);
       setPreviewUrl(null);
       setUploading(false);
@@ -57,16 +59,18 @@ export function AddFloorModal({
     setPreviewUrl(f ? URL.createObjectURL(f) : null);
   };
 
-  const upload = async () => {
-    if (entityId === null || !file || uploading) return;
+  const canSubmit = entityId !== null && (mode === 'blank' || file !== null) && !uploading;
+
+  const submit = async () => {
+    if (!canSubmit || entityId === null) return;
     setUploading(true);
     try {
-      const floor = await mapApi.createFloor(entityId, file);
+      const floor = await mapApi.createFloor(entityId, mode === 'blank' ? null : file);
       toast.success(`Floor plan added for “${floor.entity.name}”`);
       onCreated(floor);
       onClose();
     } catch (err) {
-      toast.error(apiErrorDetail(err, 'Failed to upload the floor plan'));
+      toast.error(apiErrorDetail(err, 'Failed to create the floor plan'));
     } finally {
       setUploading(false);
     }
@@ -103,8 +107,9 @@ export function AddFloorModal({
   return (
     <Modal open={open} title="Add floor" onClose={onClose} maxWidth="max-w-lg">
       <p className="text-xs text-gray-500 mb-3">
-        Pick the space this plan shows (a floor, the whole house, the garage…) and
-        upload its image — a scan, a sketch or a photo of a drawing all work.
+        Pick the space this plan shows (a floor, the whole house, the garage…), then
+        lay it out graphically on a blank canvas — or upload a scan, sketch or photo
+        to trace over.
       </p>
 
       <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Space</p>
@@ -116,34 +121,71 @@ export function AddFloorModal({
         )}
       </div>
 
-      <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Plan image</p>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        hidden
-        onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
-      />
-      <button
-        onClick={() => fileRef.current?.click()}
-        className={`w-full flex items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-colors overflow-hidden ${
-          previewUrl
-            ? 'border-space-600 p-0'
-            : 'border-space-700 hover:border-space-600 text-gray-500 hover:text-gray-400 py-8'
-        }`}
-      >
-        {previewUrl ? (
-          <img src={previewUrl} alt="Floor plan preview" className="max-h-48 w-full object-contain bg-space-950" />
-        ) : (
-          <>
-            <ImagePlus className="w-5 h-5" />
-            <span className="text-sm">Choose an image…</span>
-          </>
-        )}
-      </button>
-      {file && (
-        <p className="text-xs text-gray-500 mt-1.5 truncate">
-          {file.name} · {formatBytes(file.size)}
+      <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Background</p>
+      <div className="grid grid-cols-2 gap-2 mb-4">
+        <button
+          type="button"
+          onClick={() => setMode('blank')}
+          className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-colors ${
+            mode === 'blank'
+              ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+              : 'text-gray-400 hover:text-white hover:bg-space-800 border-space-700'
+          }`}
+        >
+          <LayoutGrid className="w-4 h-4 shrink-0" />
+          Blank canvas
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('image')}
+          className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm transition-colors ${
+            mode === 'image'
+              ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+              : 'text-gray-400 hover:text-white hover:bg-space-800 border-space-700'
+          }`}
+        >
+          <ImagePlus className="w-4 h-4 shrink-0" />
+          Upload image
+        </button>
+      </div>
+
+      {mode === 'image' && (
+        <>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+          />
+          <button
+            onClick={() => fileRef.current?.click()}
+            className={`w-full flex items-center justify-center gap-3 rounded-xl border-2 border-dashed transition-colors overflow-hidden ${
+              previewUrl
+                ? 'border-space-600 p-0'
+                : 'border-space-700 hover:border-space-600 text-gray-500 hover:text-gray-400 py-8'
+            }`}
+          >
+            {previewUrl ? (
+              <img src={previewUrl} alt="Floor plan preview" className="max-h-48 w-full object-contain bg-space-950" />
+            ) : (
+              <>
+                <ImagePlus className="w-5 h-5" />
+                <span className="text-sm">Choose an image…</span>
+              </>
+            )}
+          </button>
+          {file && (
+            <p className="text-xs text-gray-500 mt-1.5 truncate">
+              {file.name} · {formatBytes(file.size)}
+            </p>
+          )}
+        </>
+      )}
+      {mode === 'blank' && (
+        <p className="text-xs text-gray-500">
+          You'll get an empty grid to draw rooms and place furniture on. You can add a
+          background image later from the floor toolbar.
         </p>
       )}
 
@@ -155,12 +197,12 @@ export function AddFloorModal({
           Cancel
         </button>
         <button
-          onClick={upload}
-          disabled={entityId === null || !file || uploading}
+          onClick={submit}
+          disabled={!canSubmit}
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm transition-colors"
         >
           {uploading && <Loader2 className="w-4 h-4 animate-spin" />}
-          {uploading ? 'Uploading…' : 'Add floor'}
+          {uploading ? 'Creating…' : 'Add floor'}
         </button>
       </div>
     </Modal>

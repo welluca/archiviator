@@ -28,12 +28,26 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.entity import Entity
-from app.models.map import CELL_TYPES, FloorPlan, FurnitureGrid, GridCell, MapRegion
+from app.models.map import (
+    CELL_TYPES,
+    FloorPlan,
+    FurnitureGrid,
+    FurniturePlacement,
+    GridCell,
+    MapRegion,
+)
 from app.services import media, tree
 from app.services.tree import NotFoundError, RuleViolation
 
 POLYGON_TOLERANCE = 5.0  # px of slack around the image edges for region vertices
 GRID_MAX = 12
+
+# Blank-canvas floors: a fixed abstract coordinate space so regions/placements
+# never depend on a specific image. Defaults match a comfortable 4:3 plan.
+DEFAULT_CANVAS_W = 1600
+DEFAULT_CANVAS_H = 1200
+CANVAS_MIN = 1
+CANVAS_MAX = 20000
 
 
 def _get_entity(db: Session, entity_id: int) -> Entity:
@@ -123,36 +137,73 @@ def get_floor(db: Session, floor_id: int) -> FloorPlan:
     return _get_floor(db, floor_id)
 
 
-def create_floor(db: Session, entity_id: int, data: bytes) -> FloorPlan:
+def create_floor(
+    db: Session,
+    entity_id: int,
+    data: bytes | None,
+    *,
+    canvas_w: int | None = None,
+    canvas_h: int | None = None,
+) -> FloorPlan:
+    """Create a floor plan. With image bytes, the processed image sets the fixed
+    canvas dimensions; with data=None the floor is a BLANK CANVAS drawn in-app,
+    sized by canvas_w/canvas_h (defaults 1600x1200)."""
     entity = _get_entity(db, entity_id)
     if entity.kind != "space":
         raise RuleViolation(f"A floor plan must be attached to a space, not a {entity.kind}")
     if db.scalar(select(func.count(FloorPlan.id)).where(FloorPlan.entity_id == entity_id)):
         raise RuleViolation(f"Entity {entity_id} already has a floor plan")
-    processed = _process_floorplan_upload(data)
-    plan = FloorPlan(
-        entity_id=entity_id,
-        image_path=processed.file_path,
-        image_w=processed.width,
-        image_h=processed.height,
-    )
+
+    if data is None:
+        w = canvas_w if canvas_w is not None else DEFAULT_CANVAS_W
+        h = canvas_h if canvas_h is not None else DEFAULT_CANVAS_H
+        if not (CANVAS_MIN <= w <= CANVAS_MAX and CANVAS_MIN <= h <= CANVAS_MAX):
+            raise RuleViolation(
+                f"Canvas size must be between {CANVAS_MIN} and {CANVAS_MAX} on each side"
+            )
+        plan = FloorPlan(entity_id=entity_id, image_path=None, image_w=w, image_h=h)
+    else:
+        processed = _process_floorplan_upload(data)
+        plan = FloorPlan(
+            entity_id=entity_id,
+            image_path=processed.file_path,
+            image_w=processed.width,
+            image_h=processed.height,
+        )
     db.add(plan)
     db.commit()
     return plan
 
 
 def replace_floor_image(db: Session, floor_id: int, data: bytes) -> FloorPlan:
-    """Swap the image, KEEPING regions (the client warns about re-tracing —
-    existing polygons are in the old image's pixel space)."""
+    """Swap the image, KEEPING the canvas dimensions (regions/placements are in
+    that fixed canvas space) and KEEPING regions/placements. The client warns
+    about re-tracing when the new image has a different aspect ratio."""
     plan = _get_floor(db, floor_id)
     old_path = plan.image_path
     processed = _process_floorplan_upload(data)
     plan.image_path = processed.file_path
-    plan.image_w = processed.width
-    plan.image_h = processed.height
+    # image_w/image_h are the canvas frame — NOT overwritten by the new image.
+    if plan.image_w is None or plan.image_h is None:
+        plan.image_w = processed.width
+        plan.image_h = processed.height
     db.commit()
-    if old_path != plan.image_path:
+    if old_path is not None and old_path != plan.image_path:
         media.delete_floorplan_if_unreferenced(db, old_path)
+    return plan
+
+
+def remove_floor_image(db: Session, floor_id: int) -> FloorPlan:
+    """Drop the background image, turning the floor into a blank canvas. The
+    canvas dimensions and every region/placement are kept; the image file is
+    unlinked only if no other floor references the same content-addressed path."""
+    plan = _get_floor(db, floor_id)
+    old_path = plan.image_path
+    if old_path is None:
+        return plan
+    plan.image_path = None
+    db.commit()
+    media.delete_floorplan_if_unreferenced(db, old_path)
     return plan
 
 
@@ -170,7 +221,8 @@ def delete_floor(db: Session, floor_id: int) -> None:
     image_path = plan.image_path
     db.delete(plan)
     db.commit()
-    media.delete_floorplan_if_unreferenced(db, image_path)
+    if image_path is not None:
+        media.delete_floorplan_if_unreferenced(db, image_path)
 
 
 # --- regions ------------------------------------------------------------------
@@ -282,6 +334,133 @@ def delete_region(db: Session, floor_id: int, entity_id: int) -> None:
     if region is None:
         raise NotFoundError(f"No region for entity {entity_id} on floor {floor_id}")
     db.delete(region)
+    db.commit()
+
+
+# --- placements (furniture footprints on the top view) ------------------------
+
+
+def list_placements(db: Session, floor_id: int) -> list[tuple[FurniturePlacement, Entity]]:
+    """Footprints of a floor, EXCLUDING furniture archived or inside an archived
+    subtree (the row is kept so the box reappears on unarchive)."""
+    _get_floor(db, floor_id)
+    rows = db.execute(
+        select(FurniturePlacement, Entity)
+        .join(Entity, Entity.id == FurniturePlacement.entity_id)
+        .where(
+            FurniturePlacement.floor_plan_id == floor_id, tree.not_in_archived_subtree()
+        )
+        .order_by(FurniturePlacement.sort_order, FurniturePlacement.id)
+    )
+    return [(placement, entity) for placement, entity in rows]
+
+
+def placement_counts(db: Session, floor_ids: list[int]) -> dict[int, int]:
+    """{floor_plan_id: placement count} — single grouped query."""
+    if not floor_ids:
+        return {}
+    rows = db.execute(
+        select(FurniturePlacement.floor_plan_id, func.count(FurniturePlacement.id))
+        .where(FurniturePlacement.floor_plan_id.in_(floor_ids))
+        .group_by(FurniturePlacement.floor_plan_id)
+    )
+    return {floor_id: count for floor_id, count in rows}
+
+
+def _validate_placement_geometry(
+    plan: FloorPlan,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    rotation: float,
+    label_x: float | None,
+    label_y: float | None,
+) -> None:
+    """All coords finite; positive size; the (un-rotated) box within the canvas
+    with ±POLYGON_TOLERANCE slack. Checked BEFORE commit — a stored NaN/inf
+    would 500 every floor-detail GET (JSONResponse is strict, allow_nan=False)."""
+    for name, value in (
+        ("x", x), ("y", y), ("w", w), ("h", h), ("rotation", rotation)
+    ):
+        if not math.isfinite(value):
+            raise RuleViolation(f"Placement {name} must be a finite number")
+    if w <= 0 or h <= 0:
+        raise RuleViolation("Placement width and height must be positive")
+    for name, value in (("label_x", label_x), ("label_y", label_y)):
+        if value is not None and not math.isfinite(value):
+            raise RuleViolation(f"{name} must be a finite number")
+    if plan.image_w is None or plan.image_h is None:
+        return
+    if not (
+        -POLYGON_TOLERANCE <= x
+        and -POLYGON_TOLERANCE <= y
+        and x + w <= plan.image_w + POLYGON_TOLERANCE
+        and y + h <= plan.image_h + POLYGON_TOLERANCE
+    ):
+        raise RuleViolation(
+            f"Placement box ({x}, {y}, {w}x{h}) is outside the floor canvas "
+            f"({plan.image_w}x{plan.image_h})"
+        )
+
+
+def upsert_placement(
+    db: Session,
+    floor_id: int,
+    entity_id: int,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    rotation: float = 0.0,
+    label_x: float | None = None,
+    label_y: float | None = None,
+) -> FurniturePlacement:
+    plan = _get_floor(db, floor_id)
+    entity = _get_entity(db, entity_id)
+    if entity.kind not in ("furniture", "container"):
+        raise RuleViolation(
+            f"A footprint must place a furniture or container, not a {entity.kind}"
+        )
+    floor_entity = db.get(Entity, plan.entity_id)
+    # Strict descendant: the trailing '/' in path prevents id-prefix traps.
+    if entity.id == floor_entity.id or not entity.path.startswith(floor_entity.path):
+        raise RuleViolation(
+            f"Furniture must be a descendant of the floor's space ({floor_entity.name})"
+        )
+    _validate_placement_geometry(plan, x, y, w, h, rotation, label_x, label_y)
+
+    placement = db.scalar(
+        select(FurniturePlacement).where(
+            FurniturePlacement.floor_plan_id == floor_id,
+            FurniturePlacement.entity_id == entity_id,
+        )
+    )
+    if placement is None:
+        placement = FurniturePlacement(floor_plan_id=floor_id, entity_id=entity_id)
+        db.add(placement)
+    placement.x = x
+    placement.y = y
+    placement.w = w
+    placement.h = h
+    placement.rotation = rotation
+    placement.label_x = label_x
+    placement.label_y = label_y
+    db.commit()
+    return placement
+
+
+def delete_placement(db: Session, floor_id: int, entity_id: int) -> None:
+    _get_floor(db, floor_id)
+    placement = db.scalar(
+        select(FurniturePlacement).where(
+            FurniturePlacement.floor_plan_id == floor_id,
+            FurniturePlacement.entity_id == entity_id,
+        )
+    )
+    if placement is None:
+        raise NotFoundError(f"No footprint for entity {entity_id} on floor {floor_id}")
+    db.delete(placement)
     db.commit()
 
 

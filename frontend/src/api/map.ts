@@ -6,6 +6,7 @@ import type {
   FurnitureGrid,
   GridCell,
   MapRegion,
+  Placement,
   PolygonPoint,
 } from '../types';
 
@@ -13,6 +14,17 @@ export interface RegionPayload {
   /** >= 3 [x,y] image-pixel points within the image bounds (+ small tolerance). */
   polygon: PolygonPoint[];
   /** Label anchor override; null resets to the polygon centroid. */
+  label_x?: number | null;
+  label_y?: number | null;
+}
+
+export interface PlacementPayload {
+  x: number;
+  y: number;
+  /** Positive; canvas coordinates. */
+  w: number;
+  h: number;
+  rotation?: number;
   label_x?: number | null;
   label_y?: number | null;
 }
@@ -58,8 +70,21 @@ export const mapApi = {
     return data;
   },
 
-  /** Upload a floor-plan image for a space entity. 409 if it already has one. */
-  async createFloor(entityId: number, file: File): Promise<FloorPlan> {
+  /** Create a floor for a space entity. With a file it's an image floor; with
+   * file=null it's a blank canvas (drawn in-app), optionally sized. 409 if the
+   * space already has a plan. */
+  async createFloor(
+    entityId: number,
+    file: File | null,
+    canvas?: { canvas_w?: number; canvas_h?: number }
+  ): Promise<FloorPlan> {
+    if (file === null) {
+      const { data } = await apiClient.post<FloorPlan>('/map/floors', {
+        entity_id: entityId,
+        ...(canvas ?? {}),
+      });
+      return data;
+    }
     const form = new FormData();
     form.append('file', file);
     form.append('entity_id', String(entityId));
@@ -69,11 +94,17 @@ export const mapApi = {
     return data;
   },
 
-  /** Replace the image only — regions KEEP their pixel coordinates. */
+  /** Replace the image only — the canvas frame and regions/placements are kept. */
   async replaceFloorImage(id: number, file: File): Promise<FloorPlan> {
     const form = new FormData();
     form.append('file', file);
     const { data } = await apiClient.patch<FloorPlan>(`/map/floors/${id}`, form);
+    return data;
+  },
+
+  /** Drop the background image (back to blank canvas); layout is untouched. */
+  async removeFloorImage(id: number): Promise<FloorPlan> {
+    const { data } = await apiClient.delete<FloorPlan>(`/map/floors/${id}/image`);
     return data;
   },
 
@@ -107,6 +138,23 @@ export const mapApi = {
 
   async deleteRegion(floorId: number, entityId: number): Promise<void> {
     await apiClient.delete(`/map/floors/${floorId}/regions/${entityId}`);
+  },
+
+  /** Upsert a furniture footprint (a non-space descendant of the floor). */
+  async putPlacement(
+    floorId: number,
+    entityId: number,
+    payload: PlacementPayload
+  ): Promise<Placement> {
+    const { data } = await apiClient.put<Placement>(
+      `/map/floors/${floorId}/placements/${entityId}`,
+      payload
+    );
+    return data;
+  },
+
+  async deletePlacement(floorId: number, entityId: number): Promise<void> {
+    await apiClient.delete(`/map/floors/${floorId}/placements/${entityId}`);
   },
 
   /** Grids of one furniture/container entity (cells included). */

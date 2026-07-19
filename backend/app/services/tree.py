@@ -300,7 +300,13 @@ def move_entity(
     # ── Map-view consistency (M8), same transaction. Imports inside the
     # function, like the media/labels hooks in delete_entity, to avoid
     # service-layer cycles. ──────────────────────────────────────────────────
-    from app.models.map import FloorPlan, FurnitureGrid, GridCell, MapRegion
+    from app.models.map import (
+        FloorPlan,
+        FurnitureGrid,
+        FurniturePlacement,
+        GridCell,
+        MapRegion,
+    )
 
     # (a) The MOVED entity's own cell binding: a grid cell renders a direct
     # child of its grid's entity, so once the entity leaves that parent the
@@ -345,6 +351,28 @@ def move_entity(
             # Strict-descendant check, mirroring mapsvc.upsert_region.
             if room_path == floor_path or not room_path.startswith(floor_path):
                 db.delete(region)
+
+    # (c) Furniture footprints of the moved subtree: same rule as regions — a
+    # placement is only meaningful while its furniture is a strict descendant of
+    # its floor plan's space, so delete the ones this move invalidated.
+    placement_rows = db.execute(
+        select(FurniturePlacement, Entity.path)
+        .join(Entity, Entity.id == FurniturePlacement.entity_id)
+        .where(subtree_range_filter(new_path))
+    ).all()
+    if placement_rows:
+        placement_floor_paths = {
+            floor_id: path
+            for floor_id, path in db.execute(
+                select(FloorPlan.id, Entity.path)
+                .join(Entity, Entity.id == FloorPlan.entity_id)
+                .where(FloorPlan.id.in_({p.floor_plan_id for p, _ in placement_rows}))
+            )
+        }
+        for placement, furn_path in placement_rows:
+            floor_path = placement_floor_paths[placement.floor_plan_id]
+            if furn_path == floor_path or not furn_path.startswith(floor_path):
+                db.delete(placement)
 
     if commit:
         db.commit()

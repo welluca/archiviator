@@ -57,6 +57,24 @@ def _floor(client, auth, entity_id, data):
     return resp.json()
 
 
+def _post_blank_floor(client, auth, entity_id, **canvas):
+    return client.post(
+        f"{API}/map/floors", json={"entity_id": entity_id, **canvas}, headers=auth
+    )
+
+
+def _blank_floor(client, auth, entity_id, **canvas):
+    resp = _post_blank_floor(client, auth, entity_id, **canvas)
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def _put_placement(client, auth, floor_id, entity_id, payload):
+    return client.put(
+        f"{API}/map/floors/{floor_id}/placements/{entity_id}", json=payload, headers=auth
+    )
+
+
 def _post_grid(client, auth, **payload):
     return client.post(f"{API}/map/grids", json=payload, headers=auth)
 
@@ -111,13 +129,15 @@ def test_floor_create_shape_list_and_media(client, auth):
     floor = _floor(client, auth, space["id"], _jpeg((10, 20, 30)))
 
     assert set(floor.keys()) == {
-        "id", "entity", "image_url", "image_w", "image_h", "sort_order", "region_count",
+        "id", "entity", "image_url", "image_w", "image_h", "sort_order",
+        "region_count", "placement_count",
     }
     assert set(floor["entity"].keys()) == {"id", "name", "breadcrumb"}
     assert floor["entity"] == {"id": space["id"], "name": "MapHome", "breadcrumb": "MapHome"}
     assert (floor["image_w"], floor["image_h"]) == (800, 600)
     assert floor["sort_order"] == 0
     assert floor["region_count"] == 0
+    assert floor["placement_count"] == 0
     assert floor["image_url"].startswith("/media/floorplans/")
 
     listed = client.get(f"{API}/map/floors", headers=auth).json()
@@ -139,6 +159,78 @@ def test_floor_create_rules_404_and_409(client, auth):
 
     _floor(client, auth, space["id"], data)
     assert _post_floor(client, auth, space["id"], data).status_code == 409  # duplicate
+
+
+def test_blank_canvas_floor_create_defaults_and_custom(client, auth):
+    s1 = _entity(client, auth, "BlankA", "space")
+    floor = _blank_floor(client, auth, s1["id"])
+    assert floor["image_url"] is None
+    assert (floor["image_w"], floor["image_h"]) == (1600, 1200)
+    assert floor["region_count"] == 0 and floor["placement_count"] == 0
+
+    s2 = _entity(client, auth, "BlankB", "space")
+    custom = _blank_floor(client, auth, s2["id"], canvas_w=2400, canvas_h=1800)
+    assert (custom["image_w"], custom["image_h"]) == (2400, 1800)
+
+    detail = client.get(f"{API}/map/floors/{floor['id']}", headers=auth).json()
+    assert detail["image_url"] is None
+    assert detail["regions"] == [] and detail["placements"] == []
+
+
+def test_blank_canvas_floor_rules(client, auth):
+    space = _entity(client, auth, "BlankRules", "space")
+    furniture = _entity(client, auth, "BlankRulesWard", "furniture", space["id"])
+
+    assert _post_blank_floor(client, auth, 999999).status_code == 404
+    assert _post_blank_floor(client, auth, furniture["id"]).status_code == 409  # not a space
+    # Out-of-range canvas: schema cap (422) at the router.
+    assert _post_blank_floor(client, auth, space["id"], canvas_w=0).status_code == 422
+    assert _post_blank_floor(client, auth, space["id"], canvas_w=99999).status_code == 422
+
+    _blank_floor(client, auth, space["id"])
+    assert _post_blank_floor(client, auth, space["id"]).status_code == 409  # duplicate
+
+
+def test_blank_floor_add_then_remove_image_keeps_regions_and_placements(client, auth):
+    space = _entity(client, auth, "BlankSwap", "space")
+    room = _entity(client, auth, "BlankSwapRoom", "space", space["id"])
+    ward = _entity(client, auth, "BlankSwapWard", "furniture", space["id"])
+    floor = _blank_floor(client, auth, space["id"])  # 1600x1200 canvas, no image
+
+    assert client.put(
+        f"{API}/map/floors/{floor['id']}/regions/{room['id']}",
+        json={"polygon": TRIANGLE},
+        headers=auth,
+    ).status_code == 200
+    assert _put_placement(
+        client, auth, floor["id"], ward["id"], {"x": 100, "y": 100, "w": 200, "h": 150}
+    ).status_code == 200
+
+    # Add an image to the blank canvas: dims stay the canvas frame (1600x1200).
+    resp = client.patch(
+        f"{API}/map/floors/{floor['id']}",
+        files={"file": ("bg.jpg", _jpeg((60, 61, 62), size=(1000, 800)), "image/jpeg")},
+        headers=auth,
+    )
+    assert resp.status_code == 200, resp.text
+    added = resp.json()
+    assert (added["image_w"], added["image_h"]) == (1600, 1200)
+    assert added["image_url"] is not None
+    disk = _disk_path(added["image_url"])
+    assert disk.exists()
+
+    # Remove the image: back to blank canvas, file unlinked, layout untouched.
+    resp = client.delete(f"{API}/map/floors/{floor['id']}/image", headers=auth)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["image_url"] is None
+    assert not disk.exists(), "removed image is unlinked when unreferenced"
+
+    detail = client.get(f"{API}/map/floors/{floor['id']}", headers=auth).json()
+    assert [r["entity"]["id"] for r in detail["regions"]] == [room["id"]]
+    assert [p["entity"]["id"] for p in detail["placements"]] == [ward["id"]]
+
+    # Removing again is a harmless no-op.
+    assert client.delete(f"{API}/map/floors/{floor['id']}/image", headers=auth).status_code == 200
 
 
 def test_floor_image_capped_at_4000(client, auth):
@@ -187,7 +279,9 @@ def test_floor_replace_image_keeps_regions(client, auth):
     )
     assert resp.status_code == 200, resp.text
     updated = resp.json()
-    assert (updated["image_w"], updated["image_h"]) == (1000, 500)
+    # The canvas frame is FIXED at creation (800x600) — an image swap keeps it so
+    # regions/placements never shift, even though the new image is 1000x500.
+    assert (updated["image_w"], updated["image_h"]) == (800, 600)
     assert updated["image_url"] != floor["image_url"]
     assert not old_path.exists(), "old image unreferenced after replace"
     assert _disk_path(updated["image_url"]).exists()
@@ -387,6 +481,203 @@ def test_floor_detail_hides_archived_room_region_until_unarchive(client, auth):
     ).status_code == 200
     detail = client.get(f"{API}/map/floors/{floor['id']}", headers=auth).json()
     assert [r["id"] for r in detail["regions"]] == [region_id]
+
+
+# --- placements (furniture footprints) ----------------------------------------
+
+
+def test_placement_upsert_update_and_delete(client, auth):
+    space = _entity(client, auth, "PlaceUp", "space")
+    ward = _entity(client, auth, "PlaceUpWard", "furniture", space["id"])
+    floor = _blank_floor(client, auth, space["id"])
+    url = f"{API}/map/floors/{floor['id']}/placements/{ward['id']}"
+
+    resp = _put_placement(client, auth, floor["id"], ward["id"], {"x": 10, "y": 20, "w": 300, "h": 200})
+    assert resp.status_code == 200, resp.text
+    placement = resp.json()
+    assert set(placement.keys()) == {
+        "id", "entity", "x", "y", "w", "h", "rotation", "label_x", "label_y",
+    }
+    assert set(placement["entity"].keys()) == {"id", "name", "child_count", "item_count"}
+    assert (placement["x"], placement["y"], placement["w"], placement["h"]) == (10, 20, 300, 200)
+    assert placement["rotation"] == 0
+    assert placement["label_x"] is None and placement["label_y"] is None
+
+    # Upsert: same row updated.
+    resp = _put_placement(
+        client, auth, floor["id"], ward["id"],
+        {"x": 50, "y": 60, "w": 400, "h": 100, "label_x": 250, "label_y": 110},
+    )
+    assert resp.status_code == 200
+    updated = resp.json()
+    assert updated["id"] == placement["id"]
+    assert (updated["x"], updated["y"], updated["w"], updated["h"]) == (50, 60, 400, 100)
+    assert (updated["label_x"], updated["label_y"]) == (250, 110)
+
+    detail = client.get(f"{API}/map/floors/{floor['id']}", headers=auth).json()
+    assert detail["placement_count"] == 1
+    assert detail["placements"][0]["id"] == placement["id"]
+
+    assert client.delete(url, headers=auth).status_code == 204
+    assert client.delete(url, headers=auth).status_code == 404
+
+
+def test_placement_validation(client, auth):
+    space = _entity(client, auth, "PlaceVal", "space")
+    ward = _entity(client, auth, "PlaceValWard", "furniture", space["id"])
+    box = _entity(client, auth, "PlaceValBox", "container", space["id"])
+    room = _entity(client, auth, "PlaceValRoom", "space", space["id"])
+    other_root = _entity(client, auth, "PlaceValOther", "space")
+    other_furn = _entity(client, auth, "PlaceValOtherWard", "furniture", other_root["id"])
+    floor = _blank_floor(client, auth, space["id"])  # 1600x1200 canvas
+
+    def put(entity_id, payload):
+        return _put_placement(client, auth, floor["id"], entity_id, payload)
+
+    ok = {"x": 0, "y": 0, "w": 100, "h": 100}
+    # A container is placeable too.
+    assert put(box["id"], ok).status_code == 200
+    # Non-positive size is a schema 422.
+    assert put(ward["id"], {"x": 0, "y": 0, "w": 0, "h": 100}).status_code == 422
+    assert put(ward["id"], {"x": 0, "y": 0, "w": 100, "h": -5}).status_code == 422
+    # Out of canvas bounds -> 409.
+    assert put(ward["id"], {"x": 1550, "y": 0, "w": 100, "h": 100}).status_code == 409
+    assert put(ward["id"], {"x": 0, "y": 1150, "w": 100, "h": 100}).status_code == 409
+    # Kind / descendant rules -> 409.
+    assert put(room["id"], ok).status_code == 409  # a space, not furniture
+    assert put(space["id"], ok).status_code == 409  # the floor entity itself
+    assert put(other_furn["id"], ok).status_code == 409  # not a descendant
+    assert put(999999, ok).status_code == 404
+    assert _put_placement(client, auth, 999999, ward["id"], ok).status_code == 404
+
+
+def test_placement_finiteness_rejected_before_commit(client, auth):
+    space = _entity(client, auth, "PlaceNaN", "space")
+    ward = _entity(client, auth, "PlaceNaNWard", "furniture", space["id"])
+    floor = _blank_floor(client, auth, space["id"])
+
+    def put_raw(payload):
+        return client.put(
+            f"{API}/map/floors/{floor['id']}/placements/{ward['id']}",
+            content=json.dumps(payload),
+            headers={**auth, "Content-Type": "application/json"},
+        )
+
+    # NaN/inf tokens pass json.loads + pydantic floats — the SERVICE must reject,
+    # else a committed non-finite would 500 every floor-detail GET.
+    assert put_raw({"x": float("nan"), "y": 0, "w": 100, "h": 100}).status_code == 409
+    assert put_raw({"x": 0, "y": float("inf"), "w": 100, "h": 100}).status_code == 409
+    assert put_raw({"x": 0, "y": 0, "w": 100, "h": 100, "rotation": float("nan")}).status_code == 409
+    assert put_raw(
+        {"x": 0, "y": 0, "w": 100, "h": 100, "label_x": float("inf"), "label_y": 5}
+    ).status_code == 409
+
+    resp = client.get(f"{API}/map/floors/{floor['id']}", headers=auth)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["placements"] == []
+
+
+def test_placement_unique_per_floor_and_item_counts(client, auth):
+    space = _entity(client, auth, "PlaceCount", "space")
+    ward = _entity(client, auth, "PlaceCountWard", "furniture", space["id"])
+    _entity(client, auth, "PlaceCountItemA", "item", ward["id"])
+    box = _entity(client, auth, "PlaceCountBox", "container", ward["id"])
+    _entity(client, auth, "PlaceCountItemB", "item", box["id"])
+    floor = _blank_floor(client, auth, space["id"])
+
+    r1 = _put_placement(client, auth, floor["id"], ward["id"], {"x": 0, "y": 0, "w": 100, "h": 100})
+    r2 = _put_placement(client, auth, floor["id"], ward["id"], {"x": 5, "y": 5, "w": 120, "h": 120})
+    assert r1.json()["id"] == r2.json()["id"]  # UNIQUE(floor, entity): same row upserted
+
+    detail = client.get(f"{API}/map/floors/{floor['id']}", headers=auth).json()
+    placement = detail["placements"][0]
+    assert placement["entity"]["item_count"] == 2  # items at depth 1 and 2
+    assert placement["entity"]["child_count"] == 2  # direct children (item + box)
+
+
+def test_placement_hidden_when_archived_until_unarchive(client, auth):
+    space = _entity(client, auth, "PlaceArch", "space")
+    ward = _entity(client, auth, "PlaceArchWard", "furniture", space["id"])
+    floor = _blank_floor(client, auth, space["id"])
+    pid = _put_placement(
+        client, auth, floor["id"], ward["id"], {"x": 0, "y": 0, "w": 100, "h": 100}
+    ).json()["id"]
+
+    assert client.post(f"{API}/entities/{ward['id']}/archive", headers=auth).status_code == 200
+    detail = client.get(f"{API}/map/floors/{floor['id']}", headers=auth).json()
+    assert detail["placements"] == []
+
+    assert client.post(f"{API}/entities/{ward['id']}/unarchive", headers=auth).status_code == 200
+    detail = client.get(f"{API}/map/floors/{floor['id']}", headers=auth).json()
+    assert [p["id"] for p in detail["placements"]] == [pid]
+
+
+def test_move_furniture_out_of_floor_deletes_placement(client, auth):
+    home = _entity(client, auth, "PlaceMove", "space")
+    other = _entity(client, auth, "PlaceMoveOther", "space")
+    den = _entity(client, auth, "PlaceMoveDen", "space", home["id"])
+    ward = _entity(client, auth, "PlaceMoveWard", "furniture", home["id"])
+    floor = _blank_floor(client, auth, home["id"])
+    assert _put_placement(
+        client, auth, floor["id"], ward["id"], {"x": 0, "y": 0, "w": 100, "h": 100}
+    ).status_code == 200
+
+    def placement_ids():
+        detail = client.get(f"{API}/map/floors/{floor['id']}", headers=auth).json()
+        return {p["entity"]["id"] for p in detail["placements"]}
+
+    # WITHIN the floor subtree: still a descendant -> footprint kept.
+    assert _move(client, auth, ward["id"], den["id"]).status_code == 200
+    assert placement_ids() == {ward["id"]}
+
+    # OUTSIDE: the furniture physically left this floor -> footprint deleted.
+    assert _move(client, auth, ward["id"], other["id"]).status_code == 200
+    assert placement_ids() == set()
+
+    from sqlalchemy import func, select
+
+    from app.database import get_sessionmaker
+    from app.models.map import FurniturePlacement
+
+    db = get_sessionmaker()()
+    try:
+        count = db.scalar(
+            select(func.count(FurniturePlacement.id)).where(
+                FurniturePlacement.entity_id == ward["id"]
+            )
+        )
+    finally:
+        db.close()
+    assert count == 0, "placement row deleted, not just hidden"
+
+
+def test_floor_delete_cascades_placements(client, auth):
+    space = _entity(client, auth, "PlaceDel", "space")
+    ward = _entity(client, auth, "PlaceDelWard", "furniture", space["id"])
+    floor = _blank_floor(client, auth, space["id"])
+    assert _put_placement(
+        client, auth, floor["id"], ward["id"], {"x": 0, "y": 0, "w": 100, "h": 100}
+    ).status_code == 200
+
+    assert client.delete(f"{API}/map/floors/{floor['id']}", headers=auth).status_code == 204
+
+    from sqlalchemy import func, select
+
+    from app.database import get_sessionmaker
+    from app.models.map import FurniturePlacement
+
+    db = get_sessionmaker()()
+    try:
+        count = db.scalar(
+            select(func.count(FurniturePlacement.id)).where(
+                FurniturePlacement.floor_plan_id == floor["id"]
+            )
+        )
+    finally:
+        db.close()
+    assert count == 0
+    # The furniture entity itself survives (footprint is a view link).
+    assert client.get(f"{API}/entities/{ward['id']}", headers=auth).status_code == 200
 
 
 # --- grids --------------------------------------------------------------------

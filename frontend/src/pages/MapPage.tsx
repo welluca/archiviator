@@ -3,12 +3,15 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft,
   ChevronRight,
+  Eye,
+  ImageOff,
   ImagePlus,
   Loader2,
   Map as MapIcon,
   MousePointerClick,
   PenLine,
   Plus,
+  Sofa,
   Trash2,
 } from 'lucide-react';
 import { mapApi } from '../api/map';
@@ -19,11 +22,14 @@ import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import FloorTabs from '../components/map/FloorTabs';
 import FloorCanvas from '../components/map/FloorCanvas';
 import RegionEditor from '../components/map/RegionEditor';
+import PlacementEditor from '../components/map/PlacementEditor';
 import RoomPanel from '../components/map/RoomPanel';
 import GridView from '../components/map/GridView';
 import AddFloorModal from '../components/map/AddFloorModal';
 import ReplaceFloorImageModal from '../components/map/ReplaceFloorImageModal';
 import type { Entity, FloorPlan, FloorPlanDetail, PathSegment } from '../types';
+
+type MapMode = 'view' | 'rooms' | 'furniture';
 
 const intParam = (params: URLSearchParams, key: string): number | null => {
   const raw = params.get(key);
@@ -62,9 +68,10 @@ export default function MapPage() {
   const [floors, setFloors] = useState<FloorPlan[] | null>(null);
   const [floorDetail, setFloorDetail] = useState<FloorPlanDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [editMode, setEditMode] = useState(false);
+  const [mode, setMode] = useState<MapMode>('view');
   const [addOpen, setAddOpen] = useState(false);
   const [replaceOpen, setReplaceOpen] = useState(false);
+  const [removeImageTarget, setRemoveImageTarget] = useState<FloorPlan | null>(null);
   const [deleteFloorTarget, setDeleteFloorTarget] = useState<FloorPlan | null>(null);
 
   const refreshFloors = useCallback(async () => {
@@ -109,7 +116,14 @@ export default function MapPage() {
       setFloors((prev) =>
         prev
           ? prev.map((f) =>
-              f.id === detail.id ? { ...f, region_count: detail.regions.length } : f
+              f.id === detail.id
+                ? {
+                    ...f,
+                    image_url: detail.image_url,
+                    region_count: detail.regions.length,
+                    placement_count: detail.placements.length,
+                  }
+                : f
             )
           : prev
       );
@@ -136,6 +150,21 @@ export default function MapPage() {
       for (const child of tree.childrenOf.get(id) ?? []) {
         if (child.kind !== 'space') continue; // only spaces contain spaces
         out.push(child);
+        walk(child.id);
+      }
+    };
+    walk(floorEntityId);
+    return out;
+  }, [floorEntityId, tree.childrenOf]);
+
+  // Placeable furniture: every NON-space descendant of the floor entity
+  // (furniture/containers). Rooms are spaces; footprints are everything else.
+  const descendantContainers = useMemo(() => {
+    if (floorEntityId === null) return [];
+    const out: Entity[] = [];
+    const walk = (id: number) => {
+      for (const child of tree.childrenOf.get(id) ?? []) {
+        if (child.kind === 'furniture' || child.kind === 'container') out.push(child);
         walk(child.id);
       }
     };
@@ -177,6 +206,20 @@ export default function MapPage() {
     } catch (err) {
       setDeleteFloorTarget(null);
       toast.error(apiErrorDetail(err, 'Failed to delete the floor plan'));
+    }
+  };
+
+  const handleRemoveImage = async () => {
+    if (!removeImageTarget) return;
+    try {
+      await mapApi.removeFloorImage(removeImageTarget.id);
+      setRemoveImageTarget(null);
+      toast.success('Background image removed — the layout is untouched');
+      await refreshFloors();
+      await refreshFloorDetail();
+    } catch (err) {
+      setRemoveImageTarget(null);
+      toast.error(apiErrorDetail(err, 'Failed to remove the image'));
     }
   };
 
@@ -251,9 +294,9 @@ export default function MapPage() {
           <MapIcon className="w-12 h-12 text-space-500 mb-4" />
           <h2 className="text-lg font-semibold text-white mb-1">No floor plans yet</h2>
           <p className="text-gray-500 text-sm max-w-md mb-5">
-            Upload a plan for each floor and trace its rooms, then give furniture a grid
-            of drawers and shelves. Every shape is just a view onto the tree you already
-            browse — contents, search and QR labels keep working.
+            Add a floor — draw it on a blank canvas or upload a plan to trace over — then
+            outline its rooms and place furniture on top. Every shape is just a view onto
+            the tree you already browse — contents, search and QR labels keep working.
           </p>
           <button
             onClick={() => setAddOpen(true)}
@@ -272,33 +315,53 @@ export default function MapPage() {
             onAdd={() => setAddOpen(true)}
           />
 
-          {/* Floor toolbar: breadcrumb + edit toggle + image/delete actions */}
+          {/* Floor toolbar: mode segmented control + image/delete actions */}
           {activeFloor && (
             <div className="flex flex-wrap items-center gap-2 mt-2 mb-3">
-              <p className="text-xs text-gray-500 truncate flex-1 min-w-[10rem]">
+              <div className="flex items-center gap-0.5 bg-space-950 border border-space-700 rounded-lg p-0.5">
+                {(
+                  [
+                    { key: 'view', label: 'View', icon: Eye },
+                    { key: 'rooms', label: 'Edit rooms', icon: PenLine },
+                    { key: 'furniture', label: 'Edit furniture', icon: Sofa },
+                  ] as { key: MapMode; label: string; icon: typeof Eye }[]
+                ).map(({ key, label, icon: Icon }) => (
+                  <button
+                    key={key}
+                    onClick={() => {
+                      setMode(key);
+                      if (key !== 'view') setParams({ room: null });
+                    }}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm transition-colors ${
+                      mode === key
+                        ? 'bg-blue-500/20 text-blue-300'
+                        : 'text-gray-400 hover:text-white hover:bg-space-800'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-gray-500 truncate flex-1 min-w-[6rem]">
                 {activeFloor.entity.breadcrumb || activeFloor.entity.name}
               </p>
               <button
-                onClick={() => {
-                  setEditMode((v) => !v);
-                  if (!editMode) setParams({ room: null });
-                }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border transition-colors ${
-                  editMode
-                    ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
-                    : 'text-gray-400 hover:text-white hover:bg-space-800 border-space-700'
-                }`}
-              >
-                <PenLine className="w-4 h-4" />
-                Edit regions
-              </button>
-              <button
                 onClick={() => setReplaceOpen(true)}
-                title="Replace the plan image"
+                title={activeFloor.image_url ? 'Replace the background image' : 'Add a background image'}
                 className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-space-800 border border-space-700 transition-colors"
               >
                 <ImagePlus className="w-4 h-4" />
               </button>
+              {activeFloor.image_url && (
+                <button
+                  onClick={() => setRemoveImageTarget(activeFloor)}
+                  title="Remove the background image (back to blank canvas)"
+                  className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-space-800 border border-space-700 transition-colors"
+                >
+                  <ImageOff className="w-4 h-4" />
+                </button>
+              )}
               <button
                 onClick={() => setDeleteFloorTarget(activeFloor)}
                 title="Delete this floor plan"
@@ -313,10 +376,17 @@ export default function MapPage() {
             <div className="flex items-center gap-2 text-gray-500 text-sm py-16 justify-center">
               <Loader2 className="w-4 h-4 animate-spin" /> Loading floor…
             </div>
-          ) : editMode ? (
+          ) : mode === 'rooms' ? (
             <RegionEditor
               floor={floorDetail}
               spaces={descendantSpaces}
+              floorDepth={floorDepth}
+              onFloorChanged={refreshFloorDetail}
+            />
+          ) : mode === 'furniture' ? (
+            <PlacementEditor
+              floor={floorDetail}
+              furniture={descendantContainers}
               floorDepth={floorDepth}
               onFloorChanged={refreshFloorDetail}
             />
@@ -329,11 +399,13 @@ export default function MapPage() {
                   onSelectRegion={(id) =>
                     setParams({ room: id !== null ? String(id) : null })
                   }
+                  onOpenPlacement={(id) => setParams({ grid_entity: String(id) })}
                 />
-                {floorDetail.regions.length === 0 && (
+                {floorDetail.regions.length === 0 && floorDetail.placements.length === 0 && (
                   <p className="flex items-center gap-1.5 text-xs text-gray-500 mt-2">
                     <MousePointerClick className="w-3.5 h-3.5 shrink-0" />
-                    No rooms traced yet — hit “Edit regions” to outline them on the plan.
+                    Nothing on this floor yet — use “Edit rooms” to outline rooms or
+                    “Edit furniture” to place furniture.
                   </p>
                 )}
               </div>
@@ -383,9 +455,17 @@ export default function MapPage() {
         }}
       />
       <ConfirmDialog
+        open={removeImageTarget !== null}
+        title="Remove background image"
+        message={`Remove the background image from “${removeImageTarget?.entity.name ?? ''}”? It becomes a blank canvas — your rooms and furniture stay exactly where they are.`}
+        confirmLabel="Remove image"
+        onConfirm={handleRemoveImage}
+        onCancel={() => setRemoveImageTarget(null)}
+      />
+      <ConfirmDialog
         open={deleteFloorTarget !== null}
         title="Delete floor plan"
-        message={`Delete the plan for “${deleteFloorTarget?.entity.name ?? ''}”? Traced regions go with it, but the spaces, furniture and items themselves are untouched.`}
+        message={`Delete the plan for “${deleteFloorTarget?.entity.name ?? ''}”? Traced rooms and furniture footprints go with it, but the spaces, furniture and items themselves are untouched.`}
         confirmLabel="Delete plan"
         variant="danger"
         onConfirm={handleDeleteFloor}

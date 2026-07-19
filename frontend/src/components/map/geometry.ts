@@ -48,3 +48,37 @@ export function clientToImage(
   const pt = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
   return { x: pt.x, y: pt.y };
 }
+
+// ── Axis-aligned rectangles (shared: rectangle room tool + furniture boxes) ──
+
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Two opposite corners → a normalized rect with positive w/h. */
+export function normalizeRect(ax: number, ay: number, bx: number, by: number): Rect {
+  return {
+    x: Math.min(ax, bx),
+    y: Math.min(ay, by),
+    w: Math.abs(bx - ax),
+    h: Math.abs(by - ay),
+  };
+}
+
+/** Rect → 4 polygon points (TL, TR, BR, BL) — for the rectangle ROOM tool,
+ * which persists into the SAME polygon field as the free-form polygon tool. */
+export function rectToPolygon(r: Rect): PolygonPoint[] {
+  return [
+    [r.x, r.y],
+    [r.x + r.w, r.y],
+    [r.x + r.w, r.y + r.h],
+    [r.x, r.y + r.h],
+  ];
+}
+
+/** Round to the nearest step; step<=0 is a no-op (snap-to-grid, off in v1). */
+export const snap = (v: number, step: number): number =>
+  step > 0 ? Math.round(v / step) * step : v;

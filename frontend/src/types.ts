@@ -429,11 +429,14 @@ export type PolygonPoint = [number, number];
 export interface FloorPlan {
   id: number;
   entity: FloorEntityRef;
-  image_url: string;
+  /** null for a blank-canvas floor (drawn in-app, no background image). */
+  image_url: string | null;
+  /** The FIXED canvas coordinate space (SVG viewBox); always set server-side. */
   image_w: number | null;
   image_h: number | null;
   sort_order: number;
   region_count: number;
+  placement_count: number;
 }
 
 export interface MapRegion {
@@ -444,9 +447,25 @@ export interface MapRegion {
   label_y: number | null;
 }
 
-/** GET /map/floors/{id} — floor plus its traced regions. */
-export interface FloorPlanDetail extends Omit<FloorPlan, 'region_count'> {
+/** A furniture/container footprint on the top-view floor: an axis-aligned box
+ * in canvas coords. Clicking it drills into the entity's front-view grid. */
+export interface Placement {
+  id: number;
+  entity: MapEntityRef;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Degrees clockwise about the box centre. v1 keeps every box axis-aligned. */
+  rotation: number;
+  label_x: number | null;
+  label_y: number | null;
+}
+
+/** GET /map/floors/{id} — floor plus its traced regions and furniture footprints. */
+export interface FloorPlanDetail extends Omit<FloorPlan, 'region_count' | 'placement_count'> {
   regions: MapRegion[];
+  placements: Placement[];
 }
 
 export interface GridCell {

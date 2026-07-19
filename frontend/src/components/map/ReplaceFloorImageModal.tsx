@@ -31,30 +31,46 @@ export function ReplaceFloorImageModal({ open, floor, onClose, onReplaced }: Rep
 
   if (!open || !floor) return null;
 
+  // A blank-canvas floor has no image yet — this modal then ADDS the first one
+  // (no "keep coordinates" warning, since nothing is being replaced).
+  const isAdd = floor.image_url === null;
+
   const replace = async () => {
     if (!file || busy) return;
     setBusy(true);
     try {
       await mapApi.replaceFloorImage(floor.id, file);
-      toast.success('Floor image replaced');
+      toast.success(isAdd ? 'Background image added' : 'Floor image replaced');
       onReplaced();
       onClose();
     } catch (err) {
-      toast.error(apiErrorDetail(err, 'Failed to replace the image'));
+      toast.error(apiErrorDetail(err, `Failed to ${isAdd ? 'add' : 'replace'} the image`));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Modal open={open} title={`Replace image — ${floor.entity.name}`} onClose={onClose}>
-      <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg bg-yellow-900/20 border border-yellow-700/40 mb-4">
-        <AlertTriangle className="w-4 h-4 text-yellow-500 shrink-0 mt-0.5" />
-        <p className="text-xs text-yellow-500/90">
-          Traced regions keep their pixel coordinates. If the new image is a different
-          scan, crop or scale, the shapes will not line up — retrace the rooms afterwards.
+    <Modal
+      open={open}
+      title={`${isAdd ? 'Add image' : 'Replace image'} — ${floor.entity.name}`}
+      onClose={onClose}
+    >
+      {isAdd ? (
+        <p className="text-xs text-gray-500 mb-4">
+          Add a background scan or photo to trace over. The canvas keeps its current
+          size, so anything you've already drawn stays exactly in place.
         </p>
-      </div>
+      ) : (
+        <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg bg-yellow-900/20 border border-yellow-700/40 mb-4">
+          <AlertTriangle className="w-4 h-4 text-yellow-500 shrink-0 mt-0.5" />
+          <p className="text-xs text-yellow-500/90">
+            Rooms and furniture keep their canvas coordinates. If the new image is a
+            different scan, crop or scale, the shapes may not line up — adjust them
+            afterwards.
+          </p>
+        </div>
+      )}
 
       <input
         ref={fileRef}
@@ -84,7 +100,7 @@ export function ReplaceFloorImageModal({ open, floor, onClose, onReplaced }: Rep
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm transition-colors"
         >
           {busy && <Loader2 className="w-4 h-4 animate-spin" />}
-          Replace image
+          {isAdd ? 'Add image' : 'Replace image'}
         </button>
       </div>
     </Modal>

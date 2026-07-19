@@ -1,13 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, Loader2, MousePointerClick, Trash2, Undo2, X } from 'lucide-react';
+import {
+  Check,
+  Loader2,
+  MousePointerClick,
+  Pencil,
+  Square,
+  Trash2,
+  Undo2,
+  X,
+} from 'lucide-react';
 import { mapApi } from '../../api/map';
 import { apiErrorDetail } from '../../api/entities';
 import { useToast } from '../ui/Toast';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import EntityIcon from '../browse/EntityIcon';
 import type { Entity, FloorPlanDetail, PolygonPoint } from '../../types';
-import { clamp, clientToImage, pointsAttr, polygonCentroid } from './geometry';
+import {
+  clamp,
+  clientToImage,
+  normalizeRect,
+  pointsAttr,
+  polygonCentroid,
+  rectToPolygon,
+} from './geometry';
+import CanvasBackground from './CanvasBackground';
 
 interface RegionEditorProps {
   floor: FloorPlanDetail;
@@ -38,10 +55,19 @@ export function RegionEditor({ floor, spaces, floorDepth, onFloorChanged }: Regi
   );
 
   const [selectedSpaceId, setSelectedSpaceId] = useState<number | null>(null);
+  /** How an UNTRACED space is drawn: click vertices, or drag a rectangle. */
+  const [drawTool, setDrawTool] = useState<'polygon' | 'rectangle'>('polygon');
   /** Editable polygon of the selected TRACED space (image coords). */
   const [points, setPointsState] = useState<PolygonPoint[] | null>(null);
   /** In-progress trace of an UNTRACED space. */
   const [draft, setDraft] = useState<PolygonPoint[]>([]);
+  /** Rectangle-tool anchor corner while dragging out a box (image coords). */
+  const [rectAnchor, setRectAnchor] = useState<{ x: number; y: number } | null>(null);
+  const rectAnchorRef = useRef<{ x: number; y: number } | null>(null);
+  const setRect = (v: { x: number; y: number } | null) => {
+    rectAnchorRef.current = v;
+    setRectAnchor(v);
+  };
   /** Explicit label anchor of the selected region (null = centroid). */
   const [label, setLabelState] = useState<{ x: number; y: number } | null>(null);
   const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
@@ -165,6 +191,7 @@ export function RegionEditor({ floor, spaces, floorDepth, onFloorChanged }: Regi
     flushSave();
     dirtyRef.current = false;
     setDraft([]);
+    setRect(null);
     setSelectedSpaceId(id);
   };
 
@@ -174,7 +201,8 @@ export function RegionEditor({ floor, spaces, floorDepth, onFloorChanged }: Regi
       if (ev.key !== 'Escape') return;
       // Branch on the ref, OUTSIDE any updater: updaters must stay pure (React
       // may invoke them twice), and the ref keeps this handler current.
-      if (draftRef.current.length > 0) setDraft([]);
+      if (rectAnchorRef.current !== null) setRect(null);
+      else if (draftRef.current.length > 0) setDraft([]);
       else setSelectedSpaceId(null);
     };
     window.addEventListener('keydown', onKey);
@@ -193,7 +221,7 @@ export function RegionEditor({ floor, spaces, floorDepth, onFloorChanged }: Regi
   };
 
   const onSvgClick = (ev: React.MouseEvent<SVGSVGElement>) => {
-    if (!tracing || !svgRef.current) return;
+    if (!tracing || drawTool !== 'polygon' || !svgRef.current) return;
     const p = clientToImage(svgRef.current, ev.clientX, ev.clientY);
     if (!p) return;
     const pt: PolygonPoint = [clamp(p.x, 0, w), clamp(p.y, 0, h)];
@@ -212,6 +240,38 @@ export function RegionEditor({ floor, spaces, floorDepth, onFloorChanged }: Regi
     if (!tracing || !svgRef.current) return;
     const p = clientToImage(svgRef.current, ev.clientX, ev.clientY);
     setCursor(p ? { x: clamp(p.x, 0, w), y: clamp(p.y, 0, h) } : null);
+  };
+
+  // ── Rectangle tool: press-drag-release draws a 4-point box ────────────────
+  const onSvgPointerDown = (ev: React.PointerEvent<SVGSVGElement>) => {
+    if (!tracing || drawTool !== 'rectangle' || !svgRef.current) return;
+    // Only the SVG surface itself starts a rectangle (handles stopPropagation).
+    if (ev.target !== svgRef.current) return;
+    const p = clientToImage(svgRef.current, ev.clientX, ev.clientY);
+    if (!p) return;
+    svgRef.current.setPointerCapture(ev.pointerId);
+    const anchor = { x: clamp(p.x, 0, w), y: clamp(p.y, 0, h) };
+    setRect(anchor);
+    setCursor(anchor);
+  };
+
+  const onSvgPointerMove = (ev: React.PointerEvent<SVGSVGElement>) => {
+    // Track the live opposite corner while dragging (pointer capture keeps
+    // events flowing here even if the cursor leaves the svg).
+    if (rectAnchorRef.current === null || !svgRef.current) return;
+    const p = clientToImage(svgRef.current, ev.clientX, ev.clientY);
+    if (p) setCursor({ x: clamp(p.x, 0, w), y: clamp(p.y, 0, h) });
+  };
+
+  const onSvgPointerUp = () => {
+    const anchor = rectAnchorRef.current;
+    if (anchor === null) return;
+    setRect(null);
+    const end = cursor ?? anchor;
+    const rect = normalizeRect(anchor.x, anchor.y, end.x, end.y);
+    // Ignore an accidental click / sub-pixel drag — no zero-area rooms.
+    if (rect.w < 4 || rect.h < 4) return;
+    finishDraft(rectToPolygon(rect));
   };
 
   // ── Vertex / label dragging (pointer capture on the handle) ──────────────
@@ -296,7 +356,9 @@ export function RegionEditor({ floor, spaces, floorDepth, onFloorChanged }: Regi
       ? 'Pick a room on the left — or click a traced shape on the plan.'
       : tracing
         ? draft.length === 0
-          ? `Tracing “${selectedSpace?.name}” — click on the plan to add corners.`
+          ? drawTool === 'rectangle'
+            ? `Tracing “${selectedSpace?.name}” — drag out a rectangle on the plan.`
+            : `Tracing “${selectedSpace?.name}” — click on the plan to add corners.`
           : draft.length < 3
             ? `${draft.length} point${draft.length === 1 ? '' : 's'} — add at least 3, Esc cancels.`
             : 'Click the first point (or “Close region”) to finish — Esc cancels.'
@@ -359,6 +421,32 @@ export function RegionEditor({ floor, spaces, floorDepth, onFloorChanged }: Regi
             {hint}
           </p>
           <div className="flex-1" />
+          {tracing && draft.length === 0 && rectAnchor === null && (
+            <div className="flex items-center gap-0.5 bg-space-950 border border-space-700 rounded-lg p-0.5">
+              <button
+                onClick={() => setDrawTool('polygon')}
+                title="Draw free-form corners"
+                className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors ${
+                  drawTool === 'polygon'
+                    ? 'bg-blue-500/20 text-blue-300'
+                    : 'text-gray-400 hover:text-white hover:bg-space-800'
+                }`}
+              >
+                <Pencil className="w-3.5 h-3.5" /> Polygon
+              </button>
+              <button
+                onClick={() => setDrawTool('rectangle')}
+                title="Drag out a rectangle"
+                className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors ${
+                  drawTool === 'rectangle'
+                    ? 'bg-blue-500/20 text-blue-300'
+                    : 'text-gray-400 hover:text-white hover:bg-space-800'
+                }`}
+              >
+                <Square className="w-3.5 h-3.5" /> Rectangle
+              </button>
+            </div>
+          )}
           {saving && (
             <span className="flex items-center gap-1.5 text-xs text-gray-500">
               <Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving…
@@ -410,12 +498,15 @@ export function RegionEditor({ floor, spaces, floorDepth, onFloorChanged }: Regi
             onClick={onSvgClick}
             onMouseMove={onSvgMove}
             onMouseLeave={() => setCursor(null)}
+            onPointerDown={onSvgPointerDown}
+            onPointerMove={onSvgPointerMove}
+            onPointerUp={onSvgPointerUp}
             className={`block w-full h-auto rounded-xl border border-space-700 bg-space-950 ${
               tracing ? 'cursor-crosshair' : ''
             }`}
             style={{ touchAction: 'none' }}
           >
-            <image href={floor.image_url} x={0} y={0} width={w} height={h} />
+            <CanvasBackground imageUrl={floor.image_url} w={w} h={h} idSuffix={floor.id} />
 
             {/* Context: every OTHER traced region, faint but clickable */}
             {floor.regions
@@ -497,6 +588,25 @@ export function RegionEditor({ floor, spaces, floorDepth, onFloorChanged }: Regi
                   </circle>
                 )}
               </>
+            )}
+
+            {/* In-progress rectangle drag */}
+            {tracing && rectAnchor !== null && cursor !== null && (
+              (() => {
+                const r = normalizeRect(rectAnchor.x, rectAnchor.y, cursor.x, cursor.y);
+                return (
+                  <rect
+                    x={r.x}
+                    y={r.y}
+                    width={r.w}
+                    height={r.h}
+                    strokeWidth={stroke * 1.4}
+                    strokeLinejoin="round"
+                    strokeDasharray={`${6 * scale} ${5 * scale}`}
+                    className="fill-blue-500/10 stroke-blue-400"
+                  />
+                );
+              })()
             )}
 
             {/* In-progress trace */}

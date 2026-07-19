@@ -11,12 +11,9 @@ from typing import Literal
 from fastapi import (
     APIRouter,
     Depends,
-    File,
-    Form,
     HTTPException,
     Request,
     Response,
-    UploadFile,
     status,
 )
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
@@ -26,7 +23,13 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 from app.dependencies import DbSession, get_current_user
 from app.models.entity import Entity
-from app.models.map import FloorPlan, FurnitureGrid, GridCell, MapRegion
+from app.models.map import (
+    FloorPlan,
+    FurnitureGrid,
+    FurniturePlacement,
+    GridCell,
+    MapRegion,
+)
 from app.routers.attachments import domain_errors
 from app.services import mapsvc as svc
 from app.services import media, tree
@@ -54,11 +57,12 @@ class BoundEntityOut(BaseModel):
 class FloorOut(BaseModel):
     id: int
     entity: FloorEntityOut
-    image_url: str
+    image_url: str | None  # null for a blank-canvas floor (no background image)
     image_w: int | None
     image_h: int | None
     sort_order: int
     region_count: int
+    placement_count: int
 
 
 class RegionOut(BaseModel):
@@ -69,12 +73,35 @@ class RegionOut(BaseModel):
     label_y: float | None
 
 
+class PlacementOut(BaseModel):
+    id: int
+    entity: BoundEntityOut
+    x: float
+    y: float
+    w: float
+    h: float
+    rotation: float
+    label_x: float | None
+    label_y: float | None
+
+
 class FloorDetailOut(FloorOut):
     regions: list[RegionOut]
+    placements: list[PlacementOut]
 
 
 class FloorSortUpdate(BaseModel):
     sort_order: int
+
+
+class PlacementPut(BaseModel):
+    x: float
+    y: float
+    w: float = Field(gt=0)
+    h: float = Field(gt=0)
+    rotation: float = 0.0
+    label_x: float | None = None
+    label_y: float | None = None
 
 
 class RegionPut(BaseModel):
@@ -164,21 +191,48 @@ class BindRequest(BaseModel):
 # --- shaping helpers ----------------------------------------------------------
 
 
-def _floor_out(plan: FloorPlan, entity: Entity, region_count: int) -> FloorOut:
+def _floor_out(
+    plan: FloorPlan, entity: Entity, region_count: int, placement_count: int
+) -> FloorOut:
     return FloorOut(
         id=plan.id,
         entity=FloorEntityOut(id=entity.id, name=entity.name, breadcrumb=entity.breadcrumb),
-        image_url=f"/media/{plan.image_path}",
+        image_url=f"/media/{plan.image_path}" if plan.image_path else None,
         image_w=plan.image_w,
         image_h=plan.image_h,
         sort_order=plan.sort_order,
         region_count=region_count,
+        placement_count=placement_count,
     )
 
 
 def _single_floor_out(db: Session, plan: FloorPlan) -> FloorOut:
     entity = db.get(Entity, plan.entity_id)
-    return _floor_out(plan, entity, svc.region_counts(db, [plan.id]).get(plan.id, 0))
+    return _floor_out(
+        plan,
+        entity,
+        svc.region_counts(db, [plan.id]).get(plan.id, 0),
+        svc.placement_counts(db, [plan.id]).get(plan.id, 0),
+    )
+
+
+def _placement_out(
+    placement: FurniturePlacement,
+    entity: Entity,
+    child_counts: dict[int, int],
+    items: dict[int, int],
+) -> PlacementOut:
+    return PlacementOut(
+        id=placement.id,
+        entity=_bound_entity_out(entity, child_counts, items),
+        x=placement.x,
+        y=placement.y,
+        w=placement.w,
+        h=placement.h,
+        rotation=placement.rotation,
+        label_x=placement.label_x,
+        label_y=placement.label_y,
+    )
 
 
 def _bound_entity_out(
@@ -284,19 +338,66 @@ async def list_floors(db: DbSession):
         else {}
     )
     counts = svc.region_counts(db, [p.id for p in plans])
-    return [_floor_out(p, entities[p.entity_id], counts.get(p.id, 0)) for p in plans]
+    pcounts = svc.placement_counts(db, [p.id for p in plans])
+    return [
+        _floor_out(p, entities[p.entity_id], counts.get(p.id, 0), pcounts.get(p.id, 0))
+        for p in plans
+    ]
+
+
+class FloorCreate(BaseModel):
+    """JSON body for a BLANK-CANVAS floor (no image). Image floors use the
+    multipart branch instead."""
+
+    entity_id: int
+    canvas_w: int | None = Field(default=None, ge=svc.CANVAS_MIN, le=svc.CANVAS_MAX)
+    canvas_h: int | None = Field(default=None, ge=svc.CANVAS_MIN, le=svc.CANVAS_MAX)
 
 
 @router.post("/map/floors", response_model=FloorOut, status_code=status.HTTP_201_CREATED)
-async def create_floor(
-    db: DbSession,
-    file: UploadFile = File(...),
-    entity_id: int = Form(...),
-):
-    # Read at most MAX_UPLOAD + 1 bytes: one byte over the cap is proof enough for 413.
-    data = await file.read(media.MAX_UPLOAD + 1)
-    with domain_errors():
-        plan = svc.create_floor(db, entity_id, data)
+async def create_floor(request: Request, db: DbSession):
+    """Multipart (file + entity_id) creates an image floor; JSON
+    {entity_id, canvas_w?, canvas_h?} creates a blank-canvas floor. Handled
+    manually because FastAPI cannot declare a multipart-or-JSON body on one
+    endpoint (same pattern as update_floor)."""
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("multipart/form-data"):
+        form = await request.form()
+        upload = form.get("file")
+        if not isinstance(upload, StarletteUploadFile):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Multipart body must include a 'file' upload",
+            )
+        raw_entity = form.get("entity_id")
+        try:
+            entity_id = int(raw_entity)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Multipart body must include an integer 'entity_id'",
+            )
+        # Read at most MAX_UPLOAD + 1 bytes: one over the cap is proof enough for 413.
+        data = await upload.read(media.MAX_UPLOAD + 1)
+        with domain_errors():
+            plan = svc.create_floor(db, entity_id, data)
+    else:
+        try:
+            payload = FloorCreate.model_validate(await request.json())
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=exc.errors(include_url=False),
+            )
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Body must be JSON {entity_id, canvas_w?, canvas_h?} or multipart with 'file'",
+            )
+        with domain_errors():
+            plan = svc.create_floor(
+                db, payload.entity_id, None, canvas_w=payload.canvas_w, canvas_h=payload.canvas_h
+            )
     return _single_floor_out(db, plan)
 
 
@@ -305,13 +406,17 @@ async def get_floor(floor_id: int, db: DbSession):
     with domain_errors():
         plan = svc.get_floor(db, floor_id)
         pairs = svc.list_regions(db, floor_id)
+        placement_pairs = svc.list_placements(db, floor_id)
     region_entities = [entity for _, entity in pairs]
-    child_counts = tree.child_counts(db, [e.id for e in region_entities])
-    items = svc.item_counts(db, region_entities)
-    base = _floor_out(plan, db.get(Entity, plan.entity_id), len(pairs))
+    placement_entities = [entity for _, entity in placement_pairs]
+    all_entities = region_entities + placement_entities
+    child_counts = tree.child_counts(db, [e.id for e in all_entities])
+    items = svc.item_counts(db, all_entities)
+    base = _floor_out(plan, db.get(Entity, plan.entity_id), len(pairs), len(placement_pairs))
     return FloorDetailOut(
         **base.model_dump(),
         regions=[_region_out(r, e, child_counts, items) for r, e in pairs],
+        placements=[_placement_out(p, e, child_counts, items) for p, e in placement_pairs],
     )
 
 
@@ -352,6 +457,15 @@ async def update_floor(floor_id: int, request: Request, db: DbSession):
     return _single_floor_out(db, plan)
 
 
+@router.delete("/map/floors/{floor_id}/image", response_model=FloorOut)
+async def remove_floor_image(floor_id: int, db: DbSession):
+    """Drop the background image, turning the floor into a blank canvas. The
+    canvas dimensions and every region/placement are kept."""
+    with domain_errors():
+        plan = svc.remove_floor_image(db, floor_id)
+    return _single_floor_out(db, plan)
+
+
 @router.delete("/map/floors/{floor_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_floor(floor_id: int, db: DbSession):
     with domain_errors():
@@ -385,6 +499,39 @@ async def put_region(floor_id: int, entity_id: int, payload: RegionPut, db: DbSe
 async def delete_region(floor_id: int, entity_id: int, db: DbSession):
     with domain_errors():
         svc.delete_region(db, floor_id, entity_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --- placements (furniture footprints) ----------------------------------------
+
+
+@router.put("/map/floors/{floor_id}/placements/{entity_id}", response_model=PlacementOut)
+async def put_placement(floor_id: int, entity_id: int, payload: PlacementPut, db: DbSession):
+    with domain_errors():
+        placement = svc.upsert_placement(
+            db,
+            floor_id,
+            entity_id,
+            payload.x,
+            payload.y,
+            payload.w,
+            payload.h,
+            payload.rotation,
+            payload.label_x,
+            payload.label_y,
+        )
+    entity = db.get(Entity, entity_id)
+    return _placement_out(
+        placement, entity, tree.child_counts(db, [entity.id]), svc.item_counts(db, [entity])
+    )
+
+
+@router.delete(
+    "/map/floors/{floor_id}/placements/{entity_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_placement(floor_id: int, entity_id: int, db: DbSession):
+    with domain_errors():
+        svc.delete_placement(db, floor_id, entity_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -23,9 +23,11 @@ CELL_TYPES = ("drawer", "shelf", "door", "box", "void", "other")
 
 
 class FloorPlan(Base):
-    """One plan image per space (UNIQUE entity_id); the entity is the floor's
-    SPACE node. image_w/image_h are the processed pixel dimensions the client
-    uses as the SVG viewBox."""
+    """One plan per space (UNIQUE entity_id); the entity is the floor's SPACE
+    node. image_w/image_h are the FIXED canvas coordinate space (the SVG
+    viewBox): set once at creation and never rescaled by an image swap, so
+    regions and placements stay put when an image is added/removed/replaced.
+    image_path is NULL for a blank-canvas floor (drawn in-app, no image)."""
 
     __tablename__ = "floor_plan"
 
@@ -33,7 +35,7 @@ class FloorPlan(Base):
     entity_id: Mapped[int] = mapped_column(
         ForeignKey("entity.id", ondelete="CASCADE"), unique=True
     )
-    image_path: Mapped[str] = mapped_column(Text)
+    image_path: Mapped[str | None] = mapped_column(Text)
     image_w: Mapped[int | None] = mapped_column(Integer)
     image_h: Mapped[int | None] = mapped_column(Integer)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -65,6 +67,42 @@ class MapRegion(Base):
 
     def __repr__(self) -> str:
         return f"<MapRegion {self.id} floor={self.floor_plan_id} entity={self.entity_id}>"
+
+
+class FurniturePlacement(Base):
+    """A furniture/container footprint on the top-view floor: an axis-aligned
+    box in CANVAS coordinates (same space as MapRegion polygons). entity_id is
+    a NON-space descendant of the floor's space (service-enforced) and at most
+    one footprint per (floor, entity). Clicking it drills into the entity's
+    FurnitureGrid front view. rotation is stored for forward-compat (degrees
+    clockwise about the box centre) but the v1 UI keeps every box axis-aligned.
+    label_x/label_y is an optional label anchor (client falls back to centre)."""
+
+    __tablename__ = "map_placement"
+    __table_args__ = (
+        UniqueConstraint(
+            "floor_plan_id", "entity_id", name="uq_map_placement_floor_entity"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    floor_plan_id: Mapped[int] = mapped_column(
+        ForeignKey("floor_plan.id", ondelete="CASCADE"), index=True
+    )
+    entity_id: Mapped[int] = mapped_column(
+        ForeignKey("entity.id", ondelete="CASCADE"), index=True
+    )
+    x: Mapped[float] = mapped_column(Float)
+    y: Mapped[float] = mapped_column(Float)
+    w: Mapped[float] = mapped_column(Float)
+    h: Mapped[float] = mapped_column(Float)
+    rotation: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    label_x: Mapped[float | None] = mapped_column(Float)
+    label_y: Mapped[float | None] = mapped_column(Float)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+    def __repr__(self) -> str:
+        return f"<FurniturePlacement {self.id} floor={self.floor_plan_id} entity={self.entity_id}>"
 
 
 class FurnitureGrid(Base):
